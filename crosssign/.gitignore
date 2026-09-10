@@ -18,5 +18,8 @@ contract/target/
 # deploy logs are noisy; sepolia.json is the record and IS committed
 contract/deployments/*.log
 
+# QA screenshots
+qa/shots/
+
 # OS
 .DS_Store

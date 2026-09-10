@@ -115,6 +115,36 @@ npm run build      # production build
 npm run start      # serve the production build
 ```
 
+## Test
+
+**Frontend**
+
+```bash
+npm run typecheck                 # strict TypeScript (tsc --noEmit)
+npm run build                     # production build (fails on any type error)
+node scripts/check-canonical.mjs  # JS canonical message == Rust fixture
+```
+
+**Contracts**
+
+```bash
+cd contract
+cargo test     # 28 unit tests (registry + verifier), host-side
+```
+
+**Browser QA (Playwright)** — needs the server running on `:3000`:
+
+```bash
+cd qa && npm install
+node check.mjs    # end-to-end demo flow + console/page errors on all routes
+node layout.mjs   # no horizontal overflow at 1440/1280/1024/768/390/375
+node shot.mjs     # page screenshots (desktop + mobile) → qa/shots/
+```
+
+Manual checklist before shipping: every page at 1440/1280/1024/768/390/375,
+plus the loading / empty / error / wallet-disconnected / rejected-signature /
+transaction-pending / verification-failed states — and no placeholder text.
+
 ## Smart contract (`contract/`)
 
 The on-chain half: two **Stylus** contracts in Rust.
@@ -140,6 +170,51 @@ Methods: `verify_and_issue(bytes,string,uint64,bytes,string) → uint256` ·
 
 Docs: `contract/README.md` (full API + security model) ·
 `contract/ARCHITECTURE.md` · `contract/SECURITY.md` · `contract/DEPLOYMENT.md`.
+
+## Deploy live
+
+A live CrossSign = **contracts on Arbitrum Sepolia** + **frontend pointed at
+them**.
+
+**Prerequisites**
+
+- Rust + `wasm32-unknown-unknown` target + [`cargo-stylus`](https://github.com/OffchainLabs/stylus-sdk-rs) (`cargo install cargo-stylus --locked`)
+- A funded Arbitrum Sepolia wallet — faucet: https://arbitrum.faucet.dev
+- (optional) a Vercel account to host the frontend
+
+**1. Deploy the contracts** (registry first, then verifier, then authorize):
+
+```bash
+cd contract
+cp .env.example .env            # paste PRIVATE_KEY (throwaway wallet, never commit)
+bash scripts/deploy.sh          # → deployments/sepolia.json
+cd .. && PRIVATE_KEY=0x… node scripts/chain-admin.mjs set-issuer <REGISTRY> <VERIFIER>
+```
+
+Full step-by-step (check, activate, verify on Arbiscan, troubleshooting):
+`contract/DEPLOYMENT.md`.
+
+**2. Point the frontend at the contracts** — create `.env.local`:
+
+```bash
+NEXT_PUBLIC_VERIFIER_ADDRESS=0x…     # from deployments/sepolia.json
+NEXT_PUBLIC_REGISTRY_ADDRESS=0x…
+NEXT_PUBLIC_CHAIN_ID=421614
+NEXT_PUBLIC_ARBITRUM_RPC=https://sepolia-rollup.arbitrum.io/rpc
+```
+
+**3. Ship the frontend** — push to Vercel (add the same four env vars in
+Project Settings) or self-host:
+
+```bash
+npm run build && npm run start
+```
+
+**4. Smoke test** — verify a real Phantom wallet from an Arbitrum Sepolia
+wallet, confirm the badge minted
+(`node scripts/chain-admin.mjs badge <REGISTRY> <badgeId>`), then measure gas
+(`contract/scripts/benchmark.sh`) and record the numbers in
+`contract/README.md` §10 (no gas figure is claimed until this is done).
 
 ## Stack
 
