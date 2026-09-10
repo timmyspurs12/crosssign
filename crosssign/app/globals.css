@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  border-color: #e7e5de;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #f6f5f1;
+  color: #16171c;
+  font-feature-settings: "ss01", "cv01", "cv11";
+}
+
+::selection {
+  background: rgba(0, 179, 164, 0.18);
+}
+
+/* Refined focus ring */
+:focus-visible {
+  outline: 2px solid rgba(0, 179, 164, 0.7);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Editorial label style */
+  .eyebrow {
+    @apply font-mono text-[11px] font-medium uppercase tracking-capsWide text-ink-muted;
+  }
+
+  /* Subtle hairline grid backdrop for hero / terminal surfaces */
+  .hairline-grid {
+    background-image:
+      linear-gradient(to right, rgba(20, 21, 26, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(20, 21, 26, 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Scrollbar — quiet */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d5d2c8;
+  border-radius: 8px;
+  border: 3px solid #f6f5f1;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #bfbcb1;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
