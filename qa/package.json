@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sparticuz/chromium": "^153.0.0",
     "playwright": "^1.48.2"
   }
 }

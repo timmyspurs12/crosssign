@@ -74,9 +74,57 @@ export interface SolanaSession {
 /** Internal session: the public view plus the signing closure. */
 interface ActiveSolanaSession extends SolanaSession {
   sign(message: string): Promise<Uint8Array>;
+  /** Tears down provider event listeners for this session. */
+  detach(): void;
+  /** Best-effort wallet-side disconnect (where the provider supports it). */
+  disconnectWallet(): Promise<void>;
 }
 
 let activeSession: ActiveSolanaSession | null = null;
+
+// Session-change pub/sub — React mirrors the TRUE connection state through
+// this so the UI can never display a wallet the module layer has dropped
+// (and vice versa). Same contract as the EVM side.
+const sessionListeners = new Set<() => void>();
+
+function notifySessionChanged(): void {
+  for (const listener of sessionListeners) listener();
+}
+
+/** Subscribe to Solana session changes (connect / disconnect / account drop). */
+export function onSolanaSessionChange(listener: () => void): () => void {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+
+/** Tear down the outgoing session's provider listeners before replacing it. */
+function retireSession(): void {
+  if (activeSession) activeSession.detach();
+  activeSession = null;
+}
+
+/**
+ * Explicitly drop the active Solana session. Called by the app's reset/
+ * retry/setSource paths so a "fresh start" genuinely starts from NO wallet:
+ * the next verification must re-run detection + explicit selection, and the
+ * public key is re-read from the wallet. Where the provider exposes a
+ * disconnect API (legacy injected `disconnect()`, Wallet Standard
+ * `standard:disconnect`), it is invoked best-effort — extensions may still
+ * remember site authorization internally (a wallet-extension behavior no
+ * dapp can revoke; see module docs).
+ */
+export async function disconnectSolanaSession(): Promise<void> {
+  const session = activeSession;
+  retireSession();
+  if (session) {
+    try {
+      await session.disconnectWallet();
+    } catch {
+      /* disconnect is best-effort — the local session is gone regardless */
+    }
+    notifySessionChanged();
+  }
+}
 
 /** The currently connected Solana wallet, if any. */
 export function getActiveSolanaSession(): SolanaSession | null {
@@ -288,6 +336,11 @@ async function connectWalletStandard(entry: WalletEntry): Promise<void> {
       ? b58encode(new Uint8Array(account.publicKey))
       : address;
 
+  // Any previous session is explicitly retired first (event teardown +
+  // disconnect best-effort) so switching wallets can never leave two live
+  // sessions or dangling listeners behind.
+  retireSession();
+
   activeSession = {
     walletId: entry.id,
     walletName: wallet.name,
@@ -310,21 +363,45 @@ async function connectWalletStandard(entry: WalletEntry): Promise<void> {
       if (!signature) {
         throw new WalletError(`${wallet.name} did not return a signature.`);
       }
+      // Defence in depth: the wallet's signed-for key must be the key we
+      // asked for — never trust a response that doesn't match the request.
+      if (output[0].publicKey && output[0].publicKey.byteLength > 0) {
+        const signedKey = b58encode(new Uint8Array(output[0].publicKey));
+        if (signedKey !== publicKey) {
+          throw new WalletError(
+            `${wallet.name} signed with a different account than the one connected. Please retry.`,
+          );
+        }
+      }
       return signature;
+    },
+    detach: () => offEvents(),
+    disconnectWallet: async () => {
+      const disconnect = wallet.features["standard:disconnect"] as
+        | { disconnect(): Promise<void> }
+        | undefined;
+      await disconnect?.disconnect();
     },
   };
 
-  // Drop the session if the wallet disconnects or switches accounts.
+  // Drop the session if the wallet disconnects or switches accounts, so no
+  // signing attempt can run against a stale key.
   const events = wallet.features["standard:events"] as StandardEventsFeature | undefined;
+  function offEvents(): void {
+    off?.();
+    off = null;
+  }
+  let off: (() => void) | null = null;
   if (events) {
-    const off = events.on("change", () => {
+    off = events.on("change", () => {
       const stillConnected = wallet.accounts.some((a) => a.address === address);
       if (!stillConnected && activeSession?.walletId === entry.id) {
-        activeSession = null;
-        off();
+        retireSession();
+        notifySessionChanged();
       }
     });
   }
+  notifySessionChanged();
 }
 
 async function connectInjected(entry: WalletEntry): Promise<void> {
@@ -351,6 +428,8 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
     throw new WalletError(`${descriptor.name} did not return a public key.`);
   }
 
+  retireSession();
+
   activeSession = {
     walletId: entry.id,
     walletName: descriptor.name,
@@ -368,7 +447,35 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
         throw toWalletError(err, `Signature was rejected in ${descriptor.name}.`, `Signing failed in ${descriptor.name}.`);
       }
     },
+    detach: () => offEvents(),
+    disconnectWallet: async () => {
+      await provider.disconnect?.();
+    },
   };
+
+  const solanaProvider: InjectedSolanaProvider = provider;
+  let attached = false;
+  const offEvents = () => {
+    if (!attached) return;
+    attached = false;
+    solanaProvider.removeListener?.("disconnect", onProviderDrop);
+    solanaProvider.removeListener?.("accountChanged", onProviderDrop);
+  };
+  const onProviderDrop = () => {
+    if (activeSession?.walletId !== entry.id) return;
+    retireSession();
+    notifySessionChanged();
+  };
+
+  // Phantom/Solflare-style providers emit disconnect + accountChanged;
+  // honour them so a mid-attempt account switch invalidates the session
+  // instead of signing with a stale key.
+  if (typeof solanaProvider.on === "function") {
+    solanaProvider.on("disconnect", onProviderDrop);
+    solanaProvider.on("accountChanged", onProviderDrop);
+    attached = true;
+  }
+  notifySessionChanged();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

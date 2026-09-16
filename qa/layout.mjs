@@ -1,15 +1,19 @@
 import { chromium } from "playwright";
 
 const BASE = "http://localhost:3000";
-const browser = await chromium.launch({ args: ["--no-sandbox"] });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, headless: true, args: ["--no-sandbox","--single-process","--no-zygote","--disable-gpu","--disable-dev-shm-usage","--disable-site-isolation-trials"] });
 
 const widths = [1440, 1280, 1024, 768, 390, 375];
 const routes = ["/", "/verify", "/explorer", "/badge"];
 
 let failures = 0;
 
+// One long-lived page: closing the LAST page of a single-process headless
+// shell can take the whole browser down, so we resize instead of re-creating.
+const mainPage = await browser.newPage({ viewport: { width: widths[0], height: 900 } });
 for (const width of widths) {
-  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  const page = mainPage;
+  await page.setViewportSize({ width, height: 900 });
   for (const route of routes) {
     await page.goto(BASE + route, { waitUntil: "networkidle" });
     const overflow = await page.evaluate(() => {
@@ -30,11 +34,11 @@ for (const width of widths) {
       );
     }
   }
-  await page.close();
 }
 
 // Key copy assertions on /verify
-const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const p = mainPage;
+await p.setViewportSize({ width: 1440, height: 900 });
 await p.goto(`${BASE}/verify`, { waitUntil: "networkidle" });
 const texts = [
   "Verify your wallet",

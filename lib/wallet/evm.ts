@@ -81,6 +81,8 @@ export interface EvmSession {
 
 interface ActiveEvmSession extends EvmSession {
   provider: Eip1193Provider;
+  /** Removes the accountsChanged/chainChanged listeners attached to the provider. */
+  detach: () => void;
 }
 
 let activeSession: ActiveEvmSession | null = null;
@@ -98,6 +100,28 @@ export function getActiveEvmProvider(): Eip1193Provider | null {
 
 function notifySessionChanged(): void {
   for (const listener of sessionListeners) listener();
+}
+
+/** Tear down the outgoing session (listeners first, then the session). */
+function retireSession(): void {
+  if (activeSession) activeSession.detach();
+  activeSession = null;
+}
+
+/**
+ * Explicitly drop the active EVM session. Clears the CrossSign-side state:
+ * provider listeners, the remembered provider object and the account.
+ *
+ * LIMITATION (wallet-extension level, not CrossSign): EIP-1193 has no
+ * dapp-side API to revoke a site authorization inside the extension, so
+ * `eth_requestAccounts` may still resolve quickly next time the user picks
+ * this wallet. CrossSign therefore always re-reads the account list on an
+ * explicit connect and never adopts a session without one.
+ */
+export function disconnectEvmSession(): void {
+  if (!activeSession) return;
+  retireSession();
+  notifySessionChanged();
 }
 
 /** Subscribe to session changes (connect / account switch / chain switch). */
@@ -314,6 +338,10 @@ export async function connectEvmWallet(walletId: string): Promise<EvmSession> {
 
   const chainId = await readChainId(provider);
 
+  // Retire any previous session (its provider listeners too) before
+  // replacing it — switching wallets leaves nothing dangling.
+  retireSession();
+
   activeSession = {
     walletId,
     walletName: name,
@@ -321,29 +349,42 @@ export async function connectEvmWallet(walletId: string): Promise<EvmSession> {
     address,
     chainId,
     provider,
+    detach: attachSessionListeners(provider),
   };
-  attachSessionListeners(provider);
   notifySessionChanged();
   return sessionView();
 }
 
-function attachSessionListeners(provider: Eip1193Provider): void {
-  provider.on?.("chainChanged", (chainId: unknown) => {
+/** Attach live-session listeners; returns a teardown that removes them. */
+function attachSessionListeners(provider: Eip1193Provider): () => void {
+  const onChainChanged = (chainId: unknown) => {
     if (!activeSession || activeSession.provider !== provider) return;
     activeSession.chainId = parseChainId(chainId);
     notifySessionChanged();
-  });
+  };
 
-  provider.on?.("accountsChanged", (accounts: unknown) => {
+  const onAccountsChanged = (accounts: unknown) => {
     if (!activeSession || activeSession.provider !== provider) return;
     const list = Array.isArray(accounts) ? (accounts as string[]) : [];
     if (list.length === 0) {
-      activeSession = null;
+      // Wallet fully disconnected → the session must die with it.
+      retireSession();
     } else {
+      // Account switch inside the wallet. The session tracks the wallet's
+      // truth (the new account), and the verification layer invalidates any
+      // in-flight attempt that was bound to the old one.
       activeSession.address = list[0];
     }
     notifySessionChanged();
-  });
+  };
+
+  provider.on?.("chainChanged", onChainChanged);
+  provider.on?.("accountsChanged", onAccountsChanged);
+
+  return () => {
+    provider.removeListener?.("chainChanged", onChainChanged);
+    provider.removeListener?.("accountsChanged", onAccountsChanged);
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

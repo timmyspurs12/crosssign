@@ -33,8 +33,13 @@ export function WalletCard({
             <p className="font-mono text-[13px] font-medium text-ink">
               {truncateMiddle(account.address, 8, 6)}
             </p>
+            {/* Show the wallet the user ACTUALLY connected (by name) — never
+                a hardcoded default like "Phantom", which made every wallet
+                look like a previously connected Phantom session. */}
             <p className="mt-0.5 text-[12px] text-ink-muted">
-              {account.network} · {account.ecosystem === "solana" ? "Phantom" : account.ecosystem}
+              {account.network} ·{" "}
+              {account.walletName ??
+                (account.ecosystem === "solana" ? "Solana wallet" : account.ecosystem)}
             </p>
           </div>
         </div>

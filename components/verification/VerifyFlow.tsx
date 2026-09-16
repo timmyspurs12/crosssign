@@ -104,6 +104,7 @@ export function VerifyFlow() {
                 onConnectEvm={() => openWalletModal("evm")}
                 onSwitchChain={switchEvmToArbitrum}
                 onDismissNotice={clearNotice}
+                onChangeSolanaWallet={() => openWalletModal("solana")}
               />
             )}
 
@@ -293,6 +294,7 @@ function SignState({
   onConnectEvm,
   onSwitchChain,
   onDismissNotice,
+  onChangeSolanaWallet,
 }: {
   isDemo: boolean;
   signing: boolean;
@@ -300,6 +302,7 @@ function SignState({
   onConnectEvm: () => void;
   onSwitchChain: () => void;
   onDismissNotice: () => void;
+  onChangeSolanaWallet: () => void;
 }) {
   const { state } = useVerification();
   const account = state.account!;
@@ -312,12 +315,27 @@ function SignState({
       animate={{ opacity: 1, y: 0 }}
       className="flex flex-col gap-5"
     >
-      <WalletCard
-        account={account}
-        source={state.source}
-        status="pending"
-        statusLabel="Connected"
-      />
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <WalletCard
+            account={account}
+            source={state.source}
+            status="pending"
+            statusLabel="Connected"
+          />
+        </div>
+        {!isDemo && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onChangeSolanaWallet}
+            disabled={signing}
+            className="shrink-0"
+          >
+            Change
+          </Button>
+        )}
+      </div>
 
       {!isDemo && (
         <EvmWalletRow

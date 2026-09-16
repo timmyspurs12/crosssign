@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, FileSearch, ShieldCheck } from "lucide-react";
 import { Tag } from "@/components/ui/Tag";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +14,18 @@ import type { ProofRecord } from "@/types";
 
 export function ExplorerView({ initialProof }: { initialProof?: ProofRecord | null }) {
   const [proof, setProof] = useState<ProofRecord | null>(initialProof ?? null);
-  const recent = latestProofs(6);
+
+  // Hydration-safe: the proof list is client/browser state, so the first
+  // render (server AND client) must show the empty branch. The list only
+  // appears via the effect after hydration — reading it during render is
+  // exactly what caused the classic "Did not expect server HTML to contain
+  // a <button> in a <div>" hydration mismatch on this page.
+  const [recent, setRecent] = useState<ProofRecord[]>([]);
+  const [recentLoaded, setRecentLoaded] = useState(false);
+  useEffect(() => {
+    setRecent(latestProofs(6));
+    setRecentLoaded(true);
+  }, []);
 
   const loadExample = () => {
     const demo = buildProofRecord({
@@ -68,7 +79,13 @@ export function ExplorerView({ initialProof }: { initialProof?: ProofRecord | nu
       {/* recent verifications */}
       <div>
         <p className="eyebrow mb-3">Recent verifications</p>
-        {recent.length === 0 ? (
+        {!recentLoaded ? (
+          <div className="rounded-xl border border-dashed border-line bg-surface/50 px-5 py-8 text-center">
+            <p className="font-mono text-[11px] uppercase tracking-caps text-ink-faint">
+              Checking this session…
+            </p>
+          </div>
+        ) : recent.length === 0 ? (
           <div className="rounded-xl border border-dashed border-line-strong bg-surface/50 px-5 py-8 text-center">
             <p className="text-[13px] text-ink-muted">
               No verifications yet in this session. Run a verification to see it
