@@ -11,9 +11,9 @@ const STEPS = [
     n: "01",
     title: "Connect",
     detail:
-      "Connect the wallet you want to prove — starting with Solana / Phantom.",
+      "Connect the wallet you want to prove — any Solana Wallet-Standard wallet.",
     diagram: {
-      left: "Phantom",
+      left: "Solana wallet",
       right: "CrossSign",
       action: "Wallet connected",
     },
@@ -24,7 +24,7 @@ const STEPS = [
     detail:
       "Sign a single challenge message. It moves no funds and grants no approvals.",
     diagram: {
-      left: "Phantom",
+      left: "Solana wallet",
       right: "CrossSign",
       action: "Ed25519 signature",
     },

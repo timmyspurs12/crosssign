@@ -16,7 +16,7 @@ interface FlowNode {
 }
 
 const NODES: FlowNode[] = [
-  { key: "solana", label: "SOLANA WALLET", sub: "Phantom", icon: "wallet" },
+  { key: "solana", label: "SOLANA WALLET", sub: "Phantom, Solflare, Backpack…", icon: "wallet" },
   { key: "sign", label: "SIGN", sub: "Ed25519", icon: "sign" },
   { key: "crosssign", label: "CROSSSIGN", sub: "Protocol", icon: "mark" },
   { key: "arbitrum", label: "ARBITRUM", sub: "Stylus", icon: "arbitrum" },

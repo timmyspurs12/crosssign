@@ -1,7 +1,15 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowRight, RefreshCw, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Info,
+  RefreshCw,
+  Wallet,
+  X,
+} from "lucide-react";
+
 import { Button } from "@/components/ui/Button";
 import { Tag } from "@/components/ui/Tag";
 import { Spinner } from "@/components/ui/Spinner";
@@ -9,15 +17,22 @@ import { StepIndicator } from "@/components/ui/StepIndicator";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { ChallengePanel } from "@/components/verification/ChallengePanel";
 import { WalletCard } from "@/components/verification/WalletCard";
+import { EvmWalletRow } from "@/components/verification/EvmWalletRow";
 import { VerifyingSequence } from "@/components/verification/VerifyingSequence";
 import { useVerification } from "@/components/verification/VerificationContext";
-import { openPhantomInstall } from "@/lib/phantom";
 import { cn } from "@/lib/utils";
-import type { VerificationSource } from "@/types";
 
 export function VerifyFlow() {
-  const { state, startVerification, sign, retry, setSource, phantomInstalled } =
-    useVerification();
+  const {
+    state,
+    startVerification,
+    sign,
+    retry,
+    setSource,
+    openWalletModal,
+    switchEvmToArbitrum,
+    clearNotice,
+  } = useVerification();
 
   const source = state.source;
   const isDemo = source === "demo";
@@ -70,8 +85,10 @@ export function VerifyFlow() {
               busy={state.status === "connecting"}
               error={state.error}
               isDemo={isDemo}
-              phantomInstalled={phantomInstalled}
-              onStart={() => startVerification(source)}
+              onStart={() =>
+                isDemo ? startVerification("demo") : openWalletModal("solana")
+              }
+              onConnectEvm={() => openWalletModal("evm")}
               onRetry={retry}
             />
           )}
@@ -84,6 +101,9 @@ export function VerifyFlow() {
                 isDemo={isDemo}
                 signing={state.status === "signing"}
                 onSign={sign}
+                onConnectEvm={() => openWalletModal("evm")}
+                onSwitchChain={switchEvmToArbitrum}
+                onDismissNotice={clearNotice}
               />
             )}
 
@@ -102,7 +122,9 @@ export function VerifyFlow() {
             <strong className="font-medium">Simulation mode.</strong> This is a
             scripted demonstration of the verification flow — it is{" "}
             <strong className="font-medium">not</strong> a real on-chain
-            verification. Install Phantom to verify for real.
+            verification. Switch to <strong className="font-medium">Live</strong>{" "}
+            and connect a Solana wallet (Phantom, Solflare, Backpack, OKX…) to
+            verify for real.
           </span>
         </p>
       )}
@@ -116,8 +138,8 @@ function SourceToggle({
   source,
   setSource,
 }: {
-  source: VerificationSource;
-  setSource: (s: VerificationSource) => void;
+  source: "live" | "demo";
+  setSource: (s: "live" | "demo") => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
@@ -148,7 +170,7 @@ function SourceToggle({
         </p>
       ) : (
         <p className="hidden text-[12px] text-ink-muted sm:block">
-          Phantom required
+          Solana + Arbitrum wallets
         </p>
       )}
     </div>
@@ -161,17 +183,19 @@ function ConnectState({
   busy,
   error,
   isDemo,
-  phantomInstalled,
   onStart,
+  onConnectEvm,
   onRetry,
 }: {
   busy: boolean;
   error: string | null;
   isDemo: boolean;
-  phantomInstalled: boolean;
   onStart: () => void;
+  onConnectEvm: () => void;
   onRetry: () => void;
 }) {
+  const { state } = useVerification();
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -187,11 +211,11 @@ function ConnectState({
       <p className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-ink-muted">
         {isDemo
           ? "Use a simulated wallet to preview the full verification flow."
-          : "Connect Phantom to sign the verification challenge. No funds will move."}
+          : "Pick any installed Solana wallet — Phantom, OKX Wallet, Solflare, Backpack and every other Wallet-Standard wallet. No funds will move."}
       </p>
       {!isDemo && (
         <p className="mt-2 max-w-sm rounded-md border border-line bg-paper px-3 py-2 text-[12px] leading-relaxed text-ink-faint">
-          Live verification submits through an <span className="text-ink-soft">Arbitrum wallet</span> (e.g. MetaMask on Arbitrum Sepolia) — you&apos;ll sign the Solana message, then confirm the on-chain transaction.
+          Live verification also uses an <span className="text-ink-soft">Arbitrum wallet</span> (MetaMask, Rabby, OKX, Zerion, Coinbase…) on Arbitrum Sepolia — you&apos;ll sign the Solana message, then confirm the on-chain transaction.
         </p>
       )}
 
@@ -205,11 +229,6 @@ function ConnectState({
             <Button size="sm" variant="secondary" onClick={onRetry}>
               <RefreshCw className="h-3.5 w-3.5" /> Try again
             </Button>
-            {!phantomInstalled && !isDemo && (
-              <Button size="sm" variant="ghost" onClick={openPhantomInstall}>
-                Get Phantom
-              </Button>
-            )}
           </div>
         </div>
       )}
@@ -228,16 +247,37 @@ function ConnectState({
           ) : isDemo ? (
             "Start simulation"
           ) : (
-            "Connect Phantom"
+            "Connect Solana wallet"
           )}
         </Button>
-        {!isDemo && !phantomInstalled && (
-          <button
-            onClick={openPhantomInstall}
-            className="text-[12.5px] font-medium text-ink-muted underline-offset-2 hover:text-ink hover:underline"
-          >
-            Don't have Phantom? Install it ↗
-          </button>
+
+        {!isDemo && (
+          <div className="mt-1 w-full max-w-sm rounded-xl border border-line bg-paper/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-left">
+                <p className="text-[12.5px] font-medium text-ink">
+                  Arbitrum wallet
+                </p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-ink-muted">
+                  {state.evm
+                    ? state.evm.wrongChain
+                      ? `${state.evm.walletName} · wrong network — Arbitrum Sepolia required`
+                      : `${state.evm.walletName} · ${NETWORK_LABEL}`
+                    : "Optional now — required before on-chain submit"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {state.evm && !state.evm.wrongChain && (
+                  <Tag tone="good" dot>
+                    Ready
+                  </Tag>
+                )}
+                <Button size="sm" variant="secondary" onClick={onConnectEvm}>
+                  {state.evm ? "Change" : "Connect"}
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </motion.div>
@@ -250,14 +290,21 @@ function SignState({
   isDemo,
   signing,
   onSign,
+  onConnectEvm,
+  onSwitchChain,
+  onDismissNotice,
 }: {
   isDemo: boolean;
   signing: boolean;
   onSign: () => void;
+  onConnectEvm: () => void;
+  onSwitchChain: () => void;
+  onDismissNotice: () => void;
 }) {
   const { state } = useVerification();
   const account = state.account!;
   const challenge = state.challenge!;
+  const walletName = account.walletName ?? "Your wallet";
 
   return (
     <motion.div
@@ -272,6 +319,31 @@ function SignState({
         statusLabel="Connected"
       />
 
+      {!isDemo && (
+        <EvmWalletRow
+          evm={state.evm}
+          onConnect={onConnectEvm}
+          onSwitch={onSwitchChain}
+          disabled={signing}
+        />
+      )}
+
+      {state.notice && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-accent/25 bg-accent-faint px-4 py-3">
+          <p className="flex items-start gap-2 text-[12.5px] leading-relaxed text-accent-strong">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            {state.notice}
+          </p>
+          <button
+            onClick={onDismissNotice}
+            aria-label="Dismiss"
+            className="rounded p-0.5 text-accent-strong/70 transition-colors hover:text-accent-strong"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-4">
         <div>
           <h3 className="text-[15px] font-semibold text-ink">
@@ -280,7 +352,7 @@ function SignState({
           <p className="mt-1 text-[13.5px] text-ink-muted">
             {isDemo
               ? "The simulation will produce a signature automatically."
-              : "Phantom will ask you to approve this signature request."}
+              : `${walletName} will ask you to approve this signature request — a message signature only, never a transaction.`}
           </p>
         </div>
         <ChallengePanel challenge={challenge} />
@@ -302,6 +374,8 @@ function SignState({
 }
 
 /* ————————————————— helpers ————————————————— */
+
+const NETWORK_LABEL = "Arbitrum Sepolia";
 
 function statusLabel(status: string): string {
   switch (status) {

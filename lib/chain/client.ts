@@ -25,21 +25,26 @@ import {
   type OnChainVerification,
 } from "@/lib/contract-abi";
 import { CONTRACTS, NETWORK } from "@/lib/config";
+import { getActiveEvmProvider } from "@/lib/wallet/evm";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Providers
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function hasInjectedWallet(): boolean {
-  if (typeof window === "undefined") return false;
-  return Boolean((window as unknown as { ethereum?: unknown }).ethereum);
-}
-
+/**
+ * A BrowserProvider over the EVM wallet the user explicitly connected via
+ * the EIP-6963/injected discovery layer (lib/wallet/evm.ts).
+ *
+ * This deliberately does NOT fall back to a blind `window.ethereum`: with
+ * several wallet extensions installed, `window.ethereum` may belong to any
+ * one of them (or be a stale multi-provider proxy). On-chain submission must
+ * go through the wallet the user chose — if none is connected yet, the UI
+ * opens the Arbitrum wallet selector.
+ */
 export function getBrowserProvider(): BrowserProvider | null {
-  if (!hasInjectedWallet()) return null;
-  return new BrowserProvider(
-    (window as unknown as { ethereum: unknown }).ethereum as never,
-  );
+  const provider = getActiveEvmProvider();
+  if (!provider) return null;
+  return new BrowserProvider(provider as never);
 }
 
 export function getReadProvider(): JsonRpcProvider {

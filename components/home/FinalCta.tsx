@@ -28,7 +28,7 @@ export function FinalCta() {
           </Button>
         </div>
         <p className="mt-6 font-mono text-[11px] uppercase tracking-caps text-ink-faint">
-          Works with Phantom · No seed phrase required · No funds move
+          Works with Phantom, Solflare, Backpack + more · No seed phrase required · No funds move
         </p>
       </div>
     </Container>

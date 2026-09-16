@@ -7,7 +7,7 @@ import { Tag } from "@/components/ui/Tag";
 const ROWS = [
   {
     label: "Signature scheme",
-    solana: "Ed25519 (Phantom)",
+    solana: "Ed25519 (Solana wallets)",
     evm: "secp256k1 (ecrecover) only",
   },
   {

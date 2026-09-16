@@ -29,6 +29,24 @@ export interface WalletAccount {
   publicKey: string;
   ecosystem: Ecosystem;
   network: string;
+  /** Name of the wallet app the account came from (e.g. "Phantom", "Solflare"). */
+  walletName?: string;
+  /** data:image icon of the wallet app, when discovery provides one. */
+  walletIcon?: string;
+}
+
+/**
+ * Live view of the connected Arbitrum (EVM) wallet used for on-chain
+ * submission. Kept in sync with lib/wallet/evm.ts session events.
+ */
+export interface EvmConnection {
+  address: string;
+  walletName: string;
+  walletIcon: string | null;
+  /** Chain id the wallet is on right now (null when unreadable). */
+  chainId: number | null;
+  /** True when the wallet is NOT on the target Arbitrum Sepolia chain. */
+  wrongChain: boolean;
 }
 
 export interface VerificationChallenge {
@@ -80,4 +98,8 @@ export interface VerificationState {
   error: string | null;
   proof: ProofRecord | null;
   stepIndex: number;
+  /** Connected Arbitrum (EVM) wallet used for the on-chain submission. */
+  evm: EvmConnection | null;
+  /** Non-blocking status message for the current step. */
+  notice: string | null;
 }
