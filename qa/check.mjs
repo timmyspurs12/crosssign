@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 
 const BASE = "http://localhost:3000";
-const browser = await chromium.launch({ args: ["--no-sandbox"] });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, headless: true, args: ["--no-sandbox","--single-process","--no-zygote","--disable-gpu","--disable-dev-shm-usage","--disable-site-isolation-trials"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 const errors = [];

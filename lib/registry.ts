@@ -8,51 +8,31 @@ import type { ProofRecord, VerificationSource } from "@/types";
  *   - GET    /api/proofs/:id   → fetch a single proof (explorer page)
  *
  * UI components only ever talk to these functions, never to storage directly.
+ *
+ * DELIBERATELY SESSION-SCOPED: the store is module memory ONLY. Proof
+ * records are never mirrored into browser storage of any kind:
+ *
+ *   - a completed verification must not resurface after a reload in a way
+ *     that suggests a wallet is "connected" or lets a new attempt skip the
+ *     wallet selection + signing steps;
+ *   - the previously verified address appearing in "recent verifications"
+ *     after a user cleared their site data was one source of the
+ *     "old wallet came back" confusion — the honest fix is to not persist
+ *     it client-side at all;
+ *   - proofs are still shareable/persistable via the explicit
+ *     `?proof=…` link (serializeProof), which is state the user chose to
+ *     carry around, not app-internal state.
  */
 
 const STORE = new Map<string, ProofRecord>();
-const LS_KEY = "crosssign.proofs";
-
-/**
- * Proof registry service — a typed seam for the backend.
- *
- * INTEGRATION POINT: replace the in-memory store with:
- *   - POST   /api/verify       → creates + stores the proof
- *   - GET    /api/proofs/:id   → fetch a single proof (explorer page)
- *
- * UI components only ever talk to these functions, never to storage directly.
- * The localStorage mirror is a temporary adapter so "recent verifications"
- * survive navigation in the demo build.
- */
-
-function loadLocal(): ProofRecord[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as ProofRecord[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistLocal(list: ProofRecord[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(list));
-  } catch {
-    /* storage may be unavailable (private mode) — ignore */
-  }
-}
 
 export function saveProof(proof: ProofRecord): ProofRecord {
   STORE.set(proof.id, proof);
-  const list = [...loadLocal().filter((p) => p.id !== proof.id), proof].slice(-20);
-  persistLocal(list);
   return proof;
 }
 
 export function getProof(id: string): ProofRecord | null {
-  return STORE.get(id) ?? loadLocal().find((p) => p.id === id) ?? null;
+  return STORE.get(id) ?? null;
 }
 
 /** Export a proof for the public explorer page (query-string safe). */
@@ -89,13 +69,14 @@ export function deserializeProof(raw: string): ProofRecord | null {
   }
 }
 
+/**
+ * Recent proofs for the explorer, in-memory only (this page view / this
+ * browser session). Read strictly after mount — never during render — so
+ * server HTML and the first client render always agree (no hydration
+ * mismatch from a list that only exists in the browser).
+ */
 export function latestProofs(limit = 4): ProofRecord[] {
-  const local = loadLocal();
-  const merged = [...local];
-  for (const p of STORE.values()) {
-    if (!merged.some((m) => m.id === p.id)) merged.push(p);
-  }
-  return merged.slice(-limit).reverse();
+  return [...STORE.values()].slice(-limit).reverse();
 }
 
 export function isDemo(proof: ProofRecord): boolean {

@@ -68,10 +68,19 @@ export interface InjectedSolanaProvider {
   isSolflare?: boolean;
   isBackpack?: boolean;
   publicKey: { toString(): string } | null;
+  /**
+   * NOTE: `onlyIfTrusted` exists on real providers but CrossSign NEVER uses
+   * it — silent auto-reconnect of a previously authorized wallet is exactly
+   * the behavior the verification flow must not have. Connection always
+   * follows an explicit user selection in the wallet modal.
+   */
   connect: (opts?: {
     onlyIfTrusted?: boolean;
   }) => Promise<{ publicKey: { toString(): string } }>;
   disconnect?: () => Promise<void>;
+  /** Phantom-style event API (read-only subscriptions; never mutated). */
+  on?(event: "disconnect" | "accountChanged", listener: (...args: unknown[]) => void): void;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): void;
   signMessage: (
     message: Uint8Array,
     display?: "utf8" | "hex",

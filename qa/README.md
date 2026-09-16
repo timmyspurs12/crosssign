@@ -17,5 +17,6 @@ node shot.mjs      # screenshots (desktop + mobile) → qa/shots/*.png
 | `layout.mjs` | No horizontal overflow at the six target breakpoints, plus key copy assertions on `/verify`. |
 | `shot.mjs` | Full-page + viewport screenshots of each page on desktop and mobile widths, for visual review. |
 | `final.mjs` | Pre-release spot checks (success page, explorer). |
+| `wallet-state.mjs` | Wallet-state E2E (production build): Wallet Standard + EIP-6963 fake-wallet injection, connect/sign/reject/reset/account-switch/chain-switch/reload/navigation checks, hydration-error scanning, storage-hygiene assertions. Uses `@sparticuz/chromium` via `CHROMIUM_PATH` when Playwright browsers are not installed. |
 
 All scripts launch Chromium with `--no-sandbox` (required in containers/CI).

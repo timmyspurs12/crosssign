@@ -15,8 +15,6 @@ import type {
   ProofRecord,
   VerificationSource,
   VerificationState,
-  VerificationStatus,
-  WalletAccount,
 } from "@/types";
 import {
   connectLiveWallet,
@@ -30,13 +28,22 @@ import {
   verifyDemoSignature,
 } from "@/lib/demo-adapter";
 import { saveProof } from "@/lib/registry";
-import { hasSolanaWallet } from "@/lib/wallet/solana";
+import {
+  disconnectSolanaSession,
+  getActiveSolanaSession,
+  hasSolanaWallet,
+  onSolanaSessionChange,
+} from "@/lib/wallet/solana";
 import {
   connectEvmWallet,
+  disconnectEvmSession,
   ensureArbitrumSepolia,
   getActiveEvmSession,
+  isTargetChain,
   onEvmSessionChange,
 } from "@/lib/wallet/evm";
+import { isUserRejection } from "@/lib/wallet/types";
+import { solanaPubkeyToHex } from "@/lib/base58";
 import { NETWORK } from "@/lib/config";
 
 export type WalletModalKind = "solana" | "evm";
@@ -100,17 +107,45 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   // Resolves the "connect an Arbitrum wallet" prompt opened mid-flow by sign().
   const evmPromptRef = useRef<((connected: boolean) => void) | null>(null);
 
-  const update = useCallback((patch: Partial<VerificationState>) => {
-    setState((prev) => ({ ...prev, ...patch }));
-  }, []);
+  // ── Verification-attempt generations ─────────────────────────────────────
+  // Every state-changing action that starts or cancels an attempt bumps this
+  // counter. Async continuations (wallet prompts, signing, on-chain submit)
+  // capture the current generation and only write state while it is still
+  // current. This is what makes reset()/retry()/source-switches actually
+  // final: a half-finished sign or submit that resolves AFTER a reset can no
+  // longer resurrect stale account/challenge/proof state.
+  const attemptRef = useRef(0);
+  const bumpAttempt = useCallback(() => ++attemptRef.current, []);
+
+  const updateIfCurrent = useCallback(
+    (gen: number, patch: Partial<VerificationState>) => {
+      if (attemptRef.current !== gen) return;
+      setState((prev) => ({ ...prev, ...patch }));
+    },
+    [],
+  );
 
   // ── Hydration-safe client-only effects ────────────────────────────────────
   // The server render and the first client render are identical; everything
   // browser-dependent happens here, strictly after hydration.
 
+  // A fresh mount NEVER adopts leftover wallet sessions. The wallet layer
+  // keeps module-level sessions (they outlive React); without this, leaving
+  // /verify mid-flow and coming back silently restored the previous
+  // wallet — the "it reconnects to the old wallet without asking" bug.
+  // After this, a session can only exist because the user explicitly picked
+  // a wallet in a selector during THIS mount.
+  useEffect(() => {
+    void disconnectSolanaSession();
+    disconnectEvmSession();
+    // Intentionally mount-only: this is a "start clean" rule, not a sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Default to the interactive demo when no Solana wallet is discoverable
   // (e.g. reviewing on a fresh machine). Runs after paint — no flash of
-  // inconsistent markup, no hydration mismatch.
+  // inconsistent markup, no hydration mismatch. Detection ≠ connection:
+  // this only picks the mode; it never connects anything.
   useEffect(() => {
     if (!hasSolanaWallet()) {
       setState((prev) =>
@@ -121,14 +156,6 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Mirror the EVM wallet session into React state (chain/account changes
-  // made inside the wallet update the UI live).
-  useEffect(() => {
-    return onEvmSessionChange(() => {
-      setState((prev) => ({ ...prev, evm: evmViewFromSession() }));
-    });
-  }, []);
-
   const settleEvmPrompt = useCallback((connected: boolean) => {
     const resolve = evmPromptRef.current;
     if (resolve) {
@@ -136,6 +163,77 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       resolve(connected);
     }
   }, []);
+
+  /**
+   * Cancel the current attempt everywhere at once: invalidate async
+   * continuations, close the prompt, drop transient verification state
+   * (account/challenge/proof/notice/error) and re-mirror the true wallet
+   * sessions into React so the UI and the wallet layer can never diverge.
+   */
+  const invalidateAttempt = useCallback(
+    (reason: string) => {
+      bumpAttempt();
+      settleEvmPrompt(false);
+      setWalletModal(null);
+      setState((prev) => ({
+        ...INITIAL_STATE,
+        source: prev.source,
+        evm: evmViewFromSession(),
+        error: reason,
+      }));
+    },
+    [bumpAttempt, settleEvmPrompt],
+  );
+
+  // Mirror the EVM wallet session into React state, and enforce the rule
+  // "if the wallet account changes, invalidate the existing verification
+  // attempt". A brand-new connect (null → view) is just the user choosing a
+  // wallet and must NOT invalidate; a replaced/dropped account during an
+  // in-flight attempt MUST.
+  useEffect(() => {
+    return onEvmSessionChange(() => {
+      const view = evmViewFromSession();
+      const prev = stateRef.current;
+      const midAttempt =
+        prev.source === "live" &&
+        (prev.status === "connected" || prev.status === "signing");
+      if (midAttempt && prev.evm && (!view || view.address !== prev.evm.address)) {
+        setState((p) => ({ ...p, evm: view }));
+        invalidateAttempt(
+          view
+            ? "Your Arbitrum wallet switched accounts — the verification attempt was cancelled. Sign again with the new account."
+            : "Your Arbitrum wallet was disconnected — the verification attempt was cancelled.",
+        );
+        return;
+      }
+      setState((p) => ({ ...p, evm: view }));
+    });
+  }, [invalidateAttempt]);
+
+  // Same mirroring for the Solana side: when the wallet drops the account
+  // (disconnect / account switch detected inside the extension), the
+  // in-flight attempt is cancelled rather than left showing a stale
+  // "Connected" wallet that would sign against a dead or foreign key.
+  // Guarded by busyRef so the modal's own explicit connect (which replaces
+  // the session before the context writes the new account) is not treated
+  // as an external change.
+  useEffect(() => {
+    return onSolanaSessionChange(() => {
+      if (busyRef.current) return;
+      const prev = stateRef.current;
+      if (prev.source !== "live") return;
+      const session = getActiveSolanaSession();
+      const midAttempt = prev.status === "connected" || prev.status === "signing";
+      if (!midAttempt) return;
+      if (!session || session.publicKey !== prev.account?.publicKey) {
+        invalidateAttempt(
+          session
+            ? "The connected Solana wallet switched accounts — that attempt was cancelled. Connect a wallet to start fresh."
+            : "Your Solana wallet disconnected or switched accounts — that attempt was cancelled. Connect a wallet to start fresh.",
+        );
+      }
+    });
+  }, [invalidateAttempt]);
 
   const closeWalletModal = useCallback(() => {
     setWalletModal(null);
@@ -149,40 +247,58 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
 
   const setSource = useCallback(
     (source: VerificationSource) => {
+      // Switching modes is a hard boundary: cancel everything in flight and
+      // drop BOTH wallet sessions, so demo never inherits a live wallet (or
+      // vice versa) and the next attempt starts from an explicit selection.
+      bumpAttempt();
       settleEvmPrompt(false);
+      setWalletModal(null);
+      void disconnectSolanaSession();
+      disconnectEvmSession();
       setState({ ...INITIAL_STATE, source });
     },
-    [settleEvmPrompt],
+    [bumpAttempt, settleEvmPrompt],
   );
 
-  // ── Demo path (unchanged behaviour) ───────────────────────────────────────
+  // ── Demo path ─────────────────────────────────────────────────────────────
 
   const startVerification = useCallback(
     async (source: VerificationSource) => {
       if (busyRef.current) return;
+      const gen = bumpAttempt();
       busyRef.current = true;
       try {
-        setState({ ...INITIAL_STATE, source, status: "connecting" });
+        setState((prev) => ({
+          ...INITIAL_STATE,
+          source,
+          status: "connecting",
+          evm: prev.evm,
+        }));
 
         // 1. Connect the wallet first — the challenge binds the wallet key.
         const account = await connectDemoWallet();
+        if (attemptRef.current !== gen) return;
 
-        // 2. Build the canonical challenge for THIS wallet.
+        // 2. Build a FRESH canonical challenge for THIS wallet.
         const challenge = createChallengeForWallet(account);
 
-        setState({
-          source,
-          status: "connected",
-          account,
-          challenge,
-          error: null,
-          proof: null,
-          stepIndex: 2,
-          evm: evmViewFromSession(),
-          notice: null,
-        });
+        setState((prev) =>
+          attemptRef.current !== gen
+            ? prev
+            : {
+                source,
+                status: "connected",
+                account,
+                challenge,
+                error: null,
+                proof: null,
+                stepIndex: 2,
+                evm: evmViewFromSession(),
+                notice: null,
+              },
+        );
       } catch (err) {
-        update({
+        updateIfCurrent(gen, {
           source,
           status: "failed",
           error: err instanceof Error ? err.message : "Connection failed.",
@@ -192,7 +308,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         busyRef.current = false;
       }
     },
-    [update],
+    [bumpAttempt, updateIfCurrent],
   );
 
   // ── Live Solana path ──────────────────────────────────────────────────────
@@ -200,8 +316,11 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   const connectSolanaWallet = useCallback(
     async (walletId: string) => {
       if (busyRef.current) return;
+      const gen = bumpAttempt();
       busyRef.current = true;
       try {
+        // A new connect starts a NEW attempt: stale account/challenge/proof
+        // data is dropped up front, never reused.
         setState((prev) => ({
           ...INITIAL_STATE,
           source: "live",
@@ -212,7 +331,15 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         // 1. Connect the chosen wallet — the challenge binds the wallet key.
         const account = await connectLiveWallet(walletId);
 
-        // 2. Build the canonical challenge for THIS wallet.
+        if (attemptRef.current !== gen) {
+          // Reset/navigation happened while the wallet prompt was open —
+          // this fresh connection belongs to no attempt; drop it instead of
+          // silently becoming the active session.
+          void disconnectSolanaSession();
+          return;
+        }
+
+        // 2. Build a FRESH canonical challenge for THIS wallet+key.
         const challenge = createChallengeForWallet(account);
 
         setState({
@@ -228,24 +355,27 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         });
         setWalletModal(null);
       } catch (err) {
-        // Back to idle; the selector surfaces the reason inline.
-        setState((prev) => ({
-          ...INITIAL_STATE,
-          source: prev.source,
-          evm: prev.evm,
-        }));
+        // Back to a clean idle state (the selector surfaces the reason
+        // inline); the throw keeps WalletSelectorModal's handling intact.
+        if (attemptRef.current === gen) {
+          setState((prev) => ({
+            ...INITIAL_STATE,
+            source: prev.source,
+            evm: prev.evm,
+          }));
+        }
         throw err;
       } finally {
         busyRef.current = false;
       }
     },
-    [],
+    [bumpAttempt],
   );
 
   // ── Arbitrum (EVM) path ───────────────────────────────────────────────────
 
-  const connectEvmWalletById = useCallback(async (walletId: string) => {
-    try {
+  const connectEvmWalletById = useCallback(
+    async (walletId: string) => {
       await connectEvmWallet(walletId);
       const view = evmViewFromSession();
       setState((prev) => ({
@@ -260,60 +390,94 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       }));
       setWalletModal(null);
       settleEvmPrompt(true);
-    } catch (err) {
-      // The selector surfaces the reason inline; the flow is untouched.
-      throw err;
-    }
-  }, [settleEvmPrompt]);
+    },
+    [settleEvmPrompt],
+  );
 
   const switchEvmToArbitrum = useCallback(async () => {
+    const gen = attemptRef.current;
     try {
       await ensureArbitrumSepolia();
-      setState((prev) => ({ ...prev, evm: evmViewFromSession(), notice: null }));
+      updateIfCurrent(gen, { evm: evmViewFromSession(), notice: null });
     } catch (err) {
-      setState((prev) => ({
-        ...prev,
+      updateIfCurrent(gen, {
         notice:
           err instanceof Error
             ? err.message
             : "Could not switch the wallet to Arbitrum Sepolia.",
-      }));
+      });
     }
-  }, []);
+  }, [updateIfCurrent]);
 
   // ── Sign + submit ─────────────────────────────────────────────────────────
 
   const sign = useCallback(async () => {
+    if (busyRef.current) return;
+    const gen = attemptRef.current;
     const { account, challenge, source } = stateRef.current;
-    if (!account || !challenge || busyRef.current) return;
+    if (!account || !challenge) return;
 
     busyRef.current = true;
-    update({ status: "signing", error: null, notice: null });
+    let activeChallenge = challenge;
     try {
-      let signatureBase58: string;
-
-      if (source === "demo") {
-        const payload = await signDemoChallenge(
-          challenge.message,
-          account.publicKey,
-        );
-        signatureBase58 = payload.signatureBase58;
-      } else {
-        // Message-only Ed25519 signature — never a transaction request.
-        const signed = await signLiveChallenge(challenge.message);
-        signatureBase58 = signed.signatureBase58;
+      // ── Freshness guards BEFORE consuming a signature (live only) ────────
+      // The signature must always correspond to the CURRENT wallet key and a
+      // CURRENT challenge. These checks make "the wallet changed behind our
+      // back" an explicit, recoverable reset instead of a stale-key sign.
+      if (source === "live") {
+        const session = getActiveSolanaSession();
+        if (!session) {
+          invalidateAttempt(
+            "The Solana wallet connection was lost. Connect a wallet to start a fresh verification.",
+          );
+          return;
+        }
+        if (session.publicKey !== account.publicKey) {
+          invalidateAttempt(
+            "The connected Solana wallet no longer matches this attempt. Start a new verification.",
+          );
+          return;
+        }
+        if (
+          activeChallenge.wallet.toLowerCase() !==
+          solanaPubkeyToHex(account.publicKey).toLowerCase()
+        ) {
+          invalidateAttempt(
+            "That challenge is not bound to the connected wallet. Start a new verification.",
+          );
+          return;
+        }
+        if (Date.now() >= activeChallenge.expiresAt) {
+          // A verification attempt must sign a FRESH challenge. The wallet
+          // is connected and its key just verified, so mint a new one
+          // instead of reusing (or erroring on) expired bytes.
+          activeChallenge = createChallengeForWallet(account);
+        }
       }
 
-      // Live submissions additionally need an Arbitrum (EVM) wallet on the
-      // right network. Orchestrate it now, before anything touches the chain.
+      updateIfCurrent(gen, {
+        status: "signing",
+        challenge: activeChallenge,
+        error: null,
+        notice:
+          activeChallenge !== challenge
+            ? "The previous challenge expired — a fresh one was created for this attempt."
+            : null,
+      });
+
+      // ── EVM gate runs BEFORE the signature request (live only) ────────────
+      // Wrong network → show the switch flow; never change state silently
+      // and never burn a signature first.
       if (source === "live") {
-        if (!getActiveEvmSession()) {
+        const evmSession = getActiveEvmSession();
+        if (!evmSession) {
           const connected = await new Promise<boolean>((resolve) => {
             evmPromptRef.current = resolve;
             setWalletModal("evm");
           });
+          if (attemptRef.current !== gen) return; // reset/cancelled meanwhile
           if (!connected) {
-            update({
+            updateIfCurrent(gen, {
               status: "connected",
               stepIndex: 2,
               notice:
@@ -321,22 +485,69 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
             });
             return;
           }
+        } else if (
+          evmSession.chainId !== null &&
+          !isTargetChain(evmSession.chainId)
+        ) {
+          updateIfCurrent(gen, {
+            status: "connected",
+            stepIndex: 2,
+            notice: `${evmSession.walletName} is on the wrong network — use “Switch” on the Arbitrum row, then sign again.`,
+          });
+          return;
+        }
+      }
+
+      let signatureBase58: string;
+
+      if (source === "demo") {
+        const payload = await signDemoChallenge(
+          activeChallenge.message,
+          account.publicKey,
+        );
+        signatureBase58 = payload.signatureBase58;
+      } else {
+        // Message-only Ed25519 signature — never a transaction request.
+        // (No demo fallback is reachable from a live attempt.)
+        const signed = await signLiveChallenge(activeChallenge.message);
+        // The signature must correspond to the current wallet key — if the
+        // wallet answered with a different account, reject the result.
+        if (signed.publicKeyBase58 !== account.publicKey) {
+          throw new Error(
+            "The wallet signed with a different account than the one connected. Please start a new verification.",
+          );
+        }
+        signatureBase58 = signed.signatureBase58;
+      }
+
+      if (source === "live") {
+        if (attemptRef.current !== gen) return;
+
+        // Wallet still the same one? (Account switch during the sign prompt.)
+        const session = getActiveSolanaSession();
+        if (!session || session.publicKey !== account.publicKey) {
+          invalidateAttempt(
+            "The Solana wallet changed during signing — nothing was submitted. Start a new verification.",
+          );
+          return;
         }
 
+        // Final chain guarantee (race-safe: the user may have switched
+        // networks in the wallet while the signature prompt was open).
         try {
           await ensureArbitrumSepolia();
           const view = evmViewFromSession();
-          if (view && view.wrongChain) {
-            update({
+          if (!view || view.wrongChain) {
+            updateIfCurrent(gen, {
               status: "connected",
               stepIndex: 2,
-              notice: `${view.walletName} is still not on Arbitrum Sepolia — switch networks to submit.`,
+              notice: `${view?.walletName ?? "The Arbitrum wallet"} is still not on Arbitrum Sepolia — switch networks to submit.`,
             });
             return;
           }
-          update({ evm: view });
+          updateIfCurrent(gen, { evm: view });
         } catch (err) {
-          update({
+          updateIfCurrent(gen, {
             status: "connected",
             stepIndex: 2,
             notice:
@@ -348,49 +559,79 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      update({ status: "verifying", stepIndex: 3 });
+      updateIfCurrent(gen, { status: "verifying", stepIndex: 3 });
 
       let proof: ProofRecord;
       if (source === "demo") {
         proof = await verifyDemoSignature({
           account,
-          message: challenge.message,
+          message: activeChallenge.message,
           signatureBase58,
         });
       } else {
         proof = await submitSignature({
           account,
-          challenge,
+          challenge: activeChallenge,
           signatureBase58,
         });
       }
 
+      if (attemptRef.current !== gen) return; // reset/navigated mid-submit
       saveProof(proof);
-      update({ status: "verified", proof, stepIndex: 4, error: null });
+      updateIfCurrent(gen, {
+        status: "verified",
+        proof,
+        stepIndex: 4,
+        error: null,
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Verification failed.";
       const rejected =
-        /rejected/i.test(message) || /denied/i.test(message);
-      update({
+        isUserRejection(err) || /rejected|denied/i.test(message);
+      // A failed/rejected attempt invalidates challenge+account: the next
+      // attempt re-selects the wallet and ALWAYS mints a fresh challenge —
+      // a previous signature can never be resubmitted against stale data.
+      updateIfCurrent(gen, {
         status: rejected ? "rejected" : "failed",
         error: message,
         stepIndex: 2,
+        account: null,
+        challenge: null,
+        proof: null,
       });
     } finally {
       busyRef.current = false;
     }
-  }, [update]);
+  }, [invalidateAttempt, updateIfCurrent]);
 
   const reset = useCallback(() => {
+    // Full, honest reset: cancel in-flight work, drop the transient
+    // verification state AND both module-level wallet sessions. After this,
+    // the next verification requires a fresh, explicit wallet selection with
+    // a re-read public key/account and a brand-new challenge.
+    bumpAttempt();
     settleEvmPrompt(false);
     setWalletModal(null);
-    setState(INITIAL_STATE);
-  }, [settleEvmPrompt]);
+    void disconnectSolanaSession();
+    disconnectEvmSession();
+    setState((prev) => ({ ...INITIAL_STATE, source: prev.source }));
+  }, [bumpAttempt, settleEvmPrompt]);
 
   const retry = useCallback(() => {
-    setState((prev) => ({ ...prev, status: "idle", error: null }));
-  }, []);
+    // "Try again" starts a NEW verification attempt: stale challenge/account
+    // are cleared and the Solana session is dropped so the next connect
+    // re-reads the CURRENT public key from the wallet.
+    bumpAttempt();
+    settleEvmPrompt(false);
+    setWalletModal(null);
+    void disconnectSolanaSession();
+    setState((prev) => ({
+      ...INITIAL_STATE,
+      source: prev.source,
+      evm: evmViewFromSession(),
+    }));
+  }, [bumpAttempt, settleEvmPrompt]);
 
   const clearNotice = useCallback(() => {
     setState((prev) => ({ ...prev, notice: null }));
