@@ -40,6 +40,23 @@ export const EXPLORERS = {
 export const NETWORK = {
   chainId: Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 421614),
   destinationNetwork: "arbitrum-sepolia",
+  name: "Arbitrum Sepolia",
+  rpcUrl:
+    process.env.NEXT_PUBLIC_ARBITRUM_RPC ??
+    "https://sepolia-rollup.arbitrum.io/rpc",
+  explorerUrl: "https://sepolia.arbiscan.io",
+} as const;
+
+/**
+ * EIP-3085 parameters for `wallet_addEthereumChain` / `wallet_switchEthereumChain`
+ * — used by lib/wallet/evm.ts when the user's EVM wallet is on another network.
+ */
+export const TARGET_CHAIN_PARAMS = {
+  chainId: `0x${NETWORK.chainId.toString(16)}`,
+  chainName: NETWORK.name,
+  rpcUrls: [NETWORK.rpcUrl],
+  blockExplorerUrls: [NETWORK.explorerUrl],
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
 } as const;
 
 /**

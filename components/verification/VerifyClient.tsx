@@ -9,6 +9,7 @@ import {
 } from "@/components/verification/VerificationContext";
 import { VerifyFlow } from "@/components/verification/VerifyFlow";
 import { VerificationSuccess } from "@/components/verification/VerificationSuccess";
+import { WalletSelectorModal } from "@/components/verification/WalletSelectorModal";
 
 export function VerifyClient() {
   return (
@@ -20,6 +21,7 @@ export function VerifyClient() {
         </Container>
       </main>
       <SiteFooter />
+      <WalletSelectorModal />
     </VerificationProvider>
   );
 }

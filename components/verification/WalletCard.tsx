@@ -21,8 +21,13 @@ export function WalletCard({
     <div className="rounded-xl border border-line bg-paper p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface">
-            <Wallet className="h-5 w-5 text-ink-soft" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface overflow-hidden">
+            {account.walletIcon ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={account.walletIcon} alt="" className="h-6 w-6 rounded-md" draggable={false} />
+            ) : (
+              <Wallet className="h-5 w-5 text-ink-soft" />
+            )}
           </div>
           <div>
             <p className="font-mono text-[13px] font-medium text-ink">

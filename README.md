@@ -1,7 +1,7 @@
 # CrossSign
 
 **Cross-chain identity verification on Arbitrum.** Prove ownership of a wallet
-from another ecosystem (starting with Solana / Phantom) by signing a single
+from another ecosystem (starting with Solana) by signing a single
 message — verified on-chain via **Arbitrum Stylus** (Ed25519 in Rust) — without
 bridging a single asset.
 
@@ -29,16 +29,19 @@ Vercel and a premium security product:
 | Route | What it is |
 |---|---|
 | `/` | Landing — hero with interactive Solana → Sign → CrossSign → Arbitrum → Verified flow, benefits, interactive "how it works", Stylus-vs-EVM section, buildathon strip |
-| `/verify` | The verification terminal — step indicator (Connect → Sign → Verify → Badge), live Phantom integration **and** a clearly-labelled interactive demo mode |
+| `/verify` | The verification terminal — step indicator (Connect → Sign → Verify → Badge), multi-wallet Solana + Arbitrum (EVM) integration **and** a clearly-labelled interactive demo mode |
 | `/verify/success` | Standalone success state (deep-linkable via `?proof=…`) |
 | `/badge` | Identity credential view — wallet, ecosystems, method, timestamp, tx hash, contract, proof strip, and an explicit "ownership vs real-world identity" distinction |
 | `/explorer` | Public proof inspector — security-certificate style, no wallet required |
 
 ## Live vs demo (important)
 
-- **Live mode** uses the real Phantom provider (`window.phantom.solana`) and
+- **Live mode** uses the wallet the user picks from the selector — Solana
+  wallets via the Wallet Standard (Phantom, OKX, Solflare, Backpack…) and
+  Arbitrum wallets via EIP-6963/injected EIP-1193 discovery (MetaMask, OKX,
+  Rabby, Zerion, Coinbase…) — and
   Ed25519 `signMessage`. Nothing is simulated.
-- **Demo mode** is a deterministic, clearly-labelled simulation for when Phantom
+- **Demo mode** is a deterministic, clearly-labelled simulation for when no wallet
   is unavailable (e.g. a judge on a fresh machine). It is tagged
   **"Simulation"** in the UI, uses demo-labelled transaction hashes, and never
   claims to be a real on-chain verification.
@@ -62,7 +65,11 @@ lib/
   canonical.ts           canonical message builder (byte-identical to the contract)
   base58.ts              base58 ↔ hex (Solana pubkeys / signatures)
   challenge.ts           wallet-bound challenge-message builder
-  phantom.ts             Phantom adapter (the ONLY file touching window.phantom)
+  wallet/                wallet layer — discovery, connect, signing
+    solana.ts            Solana Wallet Standard + injected discovery, Ed25519 signing
+    evm.ts               EIP-6963 / injected EIP-1193 discovery, Arbitrum Sepolia chain mgmt
+    types.ts             narrow provider surfaces (EIP-1193, EIP-6963, injected Solana)
+    useWallets.ts        hydration-safe React hooks for wallet discovery
   verify-service.ts      live verification orchestrator (sign → submit)
   chain/client.ts        ethers read/write client (the only chain-touching file)
   contract-abi.ts        VERIFIER_ABI + REGISTRY_ABI + typed records
@@ -96,7 +103,8 @@ touching any UI component:
    `submitVerification` (BrowserProvider → `verify_and_issue` → parses the
    `WalletVerified` badge id).
 2. **`lib/verify-service.ts`** — the live verification orchestrator: connect
-   Phantom → derive hex pubkey → build the canonical challenge → sign →
+   chosen Solana wallet → derive hex pubkey → build the canonical challenge →
+   sign (message only) →
    `submitVerification`.
 3. **`lib/canonical.ts`** — builds the canonical message byte-for-byte
    identically to the contract (`scripts/check-canonical.mjs` cross-checks).
@@ -210,7 +218,7 @@ Project Settings) or self-host:
 npm run build && npm run start
 ```
 
-**4. Smoke test** — verify a real Phantom wallet from an Arbitrum Sepolia
+**4. Smoke test** — verify a real Solana wallet from an Arbitrum Sepolia
 wallet, confirm the badge minted
 (`node scripts/chain-admin.mjs badge <REGISTRY> <badgeId>`), then measure gas
 (`contract/scripts/benchmark.sh`) and record the numbers in
@@ -219,6 +227,6 @@ wallet, confirm the badge minted
 ## Stack
 
 Frontend: Next.js 14 (App Router) · TypeScript · Tailwind CSS · Framer Motion ·
-@solana/web3.js · Phantom provider · Lucide icons · Geist + IBM Plex Mono.
+@solana/web3.js · @wallet-standard/app · EIP-1193/EIP-6963 providers · Lucide icons · Geist + IBM Plex Mono.
 
 Contract: Rust · Stylus SDK 0.10.9 · ed25519-dalek 2 · alloy.
