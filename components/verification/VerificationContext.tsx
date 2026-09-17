@@ -100,7 +100,6 @@ function evmViewFromSession(): EvmConnection | null {
 export function VerificationProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<VerificationState>(INITIAL_STATE);
   const [walletModal, setWalletModal] = useState<WalletModalKind | null>(null);
-  const busyRef = useRef(false);
   // Latest state for async orchestration (avoids stale closures across awaits).
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -116,6 +115,45 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   // longer resurrect stale account/challenge/proof state.
   const attemptRef = useRef(0);
   const bumpAttempt = useCallback(() => ++attemptRef.current, []);
+
+  // ── In-flight operation token (generation-keyed, deliberately NOT a bool) ─
+  // A plain boolean lock could not be cancelled: a wallet prompt that never
+  // settles kept it `true` forever, so after a reset the next "Connect wallet"
+  // click was silently swallowed and the flow was dead. This token is stamped
+  // with the generation of the operation that owns it:
+  //   • an operation of the SAME generation is refused (double-submit guard);
+  //   • an operation of an OLDER generation can never block the new attempt —
+  //     reset()/retry()/setSource() therefore cancel an in-flight attempt in
+  //     the only way that matters (its writes are dropped) without freezing
+  //     the UI;
+  //   • a late `finally` from the stale operation cannot clear the token of
+  //     the newer one, because the generations differ.
+  const busyRef = useRef<number | null>(null);
+
+  const beginOperation = useCallback((gen: number): boolean => {
+    if (busyRef.current !== null && busyRef.current === attemptRef.current) {
+      return false;
+    }
+    busyRef.current = gen;
+    return true;
+  }, []);
+
+  const endOperation = useCallback((gen: number) => {
+    if (busyRef.current === gen) busyRef.current = null;
+  }, []);
+
+  // ── Deliberate session teardown marker ───────────────────────────────────
+  // reset()/retry()/setSource()/mount drop wallet sessions on purpose. The
+  // wallet layer notifies listeners (the EVM one synchronously, before React
+  // has re-rendered), so the mirror effects below must be able to tell "we
+  // cleared this ourselves as part of an attempt reset" apart from "the
+  // wallet changed underneath us". Stamped with the generation that owns the
+  // teardown; anything that happens in a later generation is external again.
+  const selfTeardownRef = useRef(-1);
+
+  const markSelfTeardown = useCallback(() => {
+    selfTeardownRef.current = attemptRef.current;
+  }, []);
 
   const updateIfCurrent = useCallback(
     (gen: number, patch: Partial<VerificationState>) => {
@@ -136,8 +174,18 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   // After this, a session can only exist because the user explicitly picked
   // a wallet in a selector during THIS mount.
   useEffect(() => {
+    markSelfTeardown();
     void disconnectSolanaSession();
     disconnectEvmSession();
+    return () => {
+      // Leaving the flow kills everything this provider owned: bump the
+      // generation so a wallet prompt still in flight (its promise outlives
+      // the unmount) can neither install a module-level session nor write
+      // state on the way out. Without this, navigating away while a wallet
+      // prompt was open let the connection complete later and be adopted as
+      // the active session on the next visit.
+      bumpAttempt();
+    };
     // Intentionally mount-only: this is a "start clean" rule, not a sync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -194,6 +242,14 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
     return onEvmSessionChange(() => {
       const view = evmViewFromSession();
       const prev = stateRef.current;
+      // A teardown WE initiated (reset / retry / source switch / mount) is not
+      // an external wallet change: the attempt is being cleared by that very
+      // action. Without this, our own disconnect would report a bogus
+      // "wallet disconnected" cancellation.
+      if (attemptRef.current === selfTeardownRef.current) {
+        setState((p) => ({ ...p, evm: view }));
+        return;
+      }
       const midAttempt =
         prev.source === "live" &&
         (prev.status === "connected" || prev.status === "signing");
@@ -214,12 +270,17 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   // (disconnect / account switch detected inside the extension), the
   // in-flight attempt is cancelled rather than left showing a stale
   // "Connected" wallet that would sign against a dead or foreign key.
-  // Guarded by busyRef so the modal's own explicit connect (which replaces
-  // the session before the context writes the new account) is not treated
-  // as an external change.
+  //
+  // This fires DURING an in-flight signature too, on purpose: a wallet-side
+  // account switch while the sign prompt is open must cancel the attempt
+  // immediately (the UI must not keep claiming the old wallet is connected),
+  // not only once the wallet's promise happens to settle. Our own deliberate
+  // teardowns are excluded via selfTeardownRef; the modal's explicit connect
+  // cannot be mistaken for an external change because it sets status
+  // "connecting" (never "connected"/"signing") before it replaces a session.
   useEffect(() => {
     return onSolanaSessionChange(() => {
-      if (busyRef.current) return;
+      if (attemptRef.current === selfTeardownRef.current) return;
       const prev = stateRef.current;
       if (prev.source !== "live") return;
       const session = getActiveSolanaSession();
@@ -251,22 +312,22 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       // drop BOTH wallet sessions, so demo never inherits a live wallet (or
       // vice versa) and the next attempt starts from an explicit selection.
       bumpAttempt();
+      markSelfTeardown();
       settleEvmPrompt(false);
       setWalletModal(null);
       void disconnectSolanaSession();
       disconnectEvmSession();
       setState({ ...INITIAL_STATE, source });
     },
-    [bumpAttempt, settleEvmPrompt],
+    [bumpAttempt, markSelfTeardown, settleEvmPrompt],
   );
 
   // ── Demo path ─────────────────────────────────────────────────────────────
 
   const startVerification = useCallback(
     async (source: VerificationSource) => {
-      if (busyRef.current) return;
       const gen = bumpAttempt();
-      busyRef.current = true;
+      if (!beginOperation(gen)) return;
       try {
         setState((prev) => ({
           ...INITIAL_STATE,
@@ -305,19 +366,18 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
           stepIndex: 1,
         });
       } finally {
-        busyRef.current = false;
+        endOperation(gen);
       }
     },
-    [bumpAttempt, updateIfCurrent],
+    [beginOperation, bumpAttempt, endOperation, updateIfCurrent],
   );
 
   // ── Live Solana path ──────────────────────────────────────────────────────
 
   const connectSolanaWallet = useCallback(
     async (walletId: string) => {
-      if (busyRef.current) return;
       const gen = bumpAttempt();
-      busyRef.current = true;
+      if (!beginOperation(gen)) return;
       try {
         // A new connect starts a NEW attempt: stale account/challenge/proof
         // data is dropped up front, never reused.
@@ -335,6 +395,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
           // Reset/navigation happened while the wallet prompt was open —
           // this fresh connection belongs to no attempt; drop it instead of
           // silently becoming the active session.
+          markSelfTeardown();
           void disconnectSolanaSession();
           return;
         }
@@ -366,17 +427,32 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         }
         throw err;
       } finally {
-        busyRef.current = false;
+        endOperation(gen);
       }
     },
-    [bumpAttempt],
+    [beginOperation, bumpAttempt, endOperation, markSelfTeardown],
   );
 
   // ── Arbitrum (EVM) path ───────────────────────────────────────────────────
 
   const connectEvmWalletById = useCallback(
     async (walletId: string) => {
-      await connectEvmWallet(walletId);
+      // The wallet prompt can stay open for a long time. If a reset / retry /
+      // source switch / navigation happened meanwhile, the connection this
+      // prompt produces belongs to a cancelled attempt and must NOT be
+      // adopted: without this guard the wallet layer would install a fresh
+      // module session and the UI would render a wallet the user already
+      // cleared — the "old wallet came back" bug through the EVM door.
+      const gen = attemptRef.current;
+      const session = await connectEvmWallet(walletId);
+
+      if (attemptRef.current !== gen) {
+        if (getActiveEvmSession()?.walletId === session.walletId) {
+          disconnectEvmSession();
+        }
+        return;
+      }
+
       const view = evmViewFromSession();
       setState((prev) => ({
         ...prev,
@@ -412,12 +488,10 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
   // ── Sign + submit ─────────────────────────────────────────────────────────
 
   const sign = useCallback(async () => {
-    if (busyRef.current) return;
     const gen = attemptRef.current;
     const { account, challenge, source } = stateRef.current;
     if (!account || !challenge) return;
-
-    busyRef.current = true;
+    if (!beginOperation(gen)) return; // same attempt already has an op running
     let activeChallenge = challenge;
     try {
       // ── Freshness guards BEFORE consuming a signature (live only) ────────
@@ -447,12 +521,13 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
           );
           return;
         }
-        if (Date.now() >= activeChallenge.expiresAt) {
-          // A verification attempt must sign a FRESH challenge. The wallet
-          // is connected and its key just verified, so mint a new one
-          // instead of reusing (or erroring on) expired bytes.
-          activeChallenge = createChallengeForWallet(account);
-        }
+      }
+
+      // An EXPIRED challenge is never signed — for either source. The wallet
+      // is connected and its key just verified, so mint a fresh one instead
+      // of reusing (or erroring on) dead bytes.
+      if (Date.now() >= activeChallenge.expiresAt) {
+        activeChallenge = createChallengeForWallet(account);
       }
 
       updateIfCurrent(gen, {
@@ -482,6 +557,28 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
               stepIndex: 2,
               notice:
                 "Connect an Arbitrum wallet (MetaMask, Rabby, OKX Wallet…) to submit the on-chain verification.",
+            });
+            return;
+          }
+          // The prompt can be settled by a connection that isn't there any
+          // more (or by a stale one) — re-read the LIVE session instead of
+          // trusting the boolean, so the signature is never requested on the
+          // strength of a wallet that already went away.
+          const afterPrompt = getActiveEvmSession();
+          if (!afterPrompt) {
+            updateIfCurrent(gen, {
+              status: "connected",
+              stepIndex: 2,
+              notice:
+                "Connect an Arbitrum wallet (MetaMask, Rabby, OKX Wallet…) to submit the on-chain verification.",
+            });
+            return;
+          }
+          if (afterPrompt.chainId !== null && !isTargetChain(afterPrompt.chainId)) {
+            updateIfCurrent(gen, {
+              status: "connected",
+              stepIndex: 2,
+              notice: `${afterPrompt.walletName} is on the wrong network — use “Switch” on the Arbitrum row, then sign again.`,
             });
             return;
           }
@@ -520,6 +617,19 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         signatureBase58 = signed.signatureBase58;
       }
 
+      // An expired challenge is never submitted. The pre-sign guard re-mints
+      // stale bytes, but the user can sit on the wallet prompt for longer
+      // than the TTL — those bytes must die here, not on-chain.
+      if (Date.now() >= activeChallenge.expiresAt) {
+        invalidateAttempt(
+          "The verification challenge expired while the signature was pending — nothing was submitted. Start a new verification.",
+        );
+        return;
+      }
+
+      /** Arbitrum account the user approved for this attempt (pinned below). */
+      let approvedEvmAddress: string | null = null;
+
       if (source === "live") {
         if (attemptRef.current !== gen) return;
 
@@ -545,6 +655,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
             });
             return;
           }
+          approvedEvmAddress = view.address;
           updateIfCurrent(gen, { evm: view });
         } catch (err) {
           updateIfCurrent(gen, {
@@ -569,6 +680,23 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
           signatureBase58,
         });
       } else {
+        // Pin the SUBMITTING wallet too: ethers resolves the signer account
+        // at call time, so an `accountsChanged` between the network gate and
+        // this line would otherwise send the transaction from an account the
+        // user never approved on the Arbitrum row.
+        const liveEvm = getActiveEvmSession();
+        if (!liveEvm) {
+          invalidateAttempt(
+            "The Arbitrum wallet disconnected before the transaction was submitted — nothing was submitted. Start a new verification.",
+          );
+          return;
+        }
+        if (approvedEvmAddress && liveEvm.address !== approvedEvmAddress) {
+          invalidateAttempt(
+            "The Arbitrum wallet switched accounts before the transaction was submitted — nothing was submitted. Start a new verification.",
+          );
+          return;
+        }
         proof = await submitSignature({
           account,
           challenge: activeChallenge,
@@ -601,28 +729,38 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         proof: null,
       });
     } finally {
-      busyRef.current = false;
+      // Generation-checked: a stale operation that resolves after a reset
+      // must not release the token of the attempt that replaced it.
+      endOperation(gen);
     }
-  }, [invalidateAttempt, updateIfCurrent]);
+  }, [beginOperation, endOperation, invalidateAttempt, updateIfCurrent]);
 
   const reset = useCallback(() => {
     // Full, honest reset: cancel in-flight work, drop the transient
     // verification state AND both module-level wallet sessions. After this,
     // the next verification requires a fresh, explicit wallet selection with
     // a re-read public key/account and a brand-new challenge.
+    //
+    // Cancellation is by generation: any instruction still waiting on a
+    // wallet prompt can no longer write state, AND it no longer blocks a new
+    // attempt (the busy token belongs to the old generation).
     bumpAttempt();
+    markSelfTeardown();
     settleEvmPrompt(false);
     setWalletModal(null);
     void disconnectSolanaSession();
     disconnectEvmSession();
     setState((prev) => ({ ...INITIAL_STATE, source: prev.source }));
-  }, [bumpAttempt, settleEvmPrompt]);
+  }, [bumpAttempt, markSelfTeardown, settleEvmPrompt]);
 
   const retry = useCallback(() => {
     // "Try again" starts a NEW verification attempt: stale challenge/account
     // are cleared and the Solana session is dropped so the next connect
-    // re-reads the CURRENT public key from the wallet.
+    // re-reads the CURRENT public key from the wallet. The Arbitrum wallet is
+    // deliberately kept (it only pays gas and is re-selectable), but like
+    // reset() this cancels every pending wallet-prompt continuation.
     bumpAttempt();
+    markSelfTeardown();
     settleEvmPrompt(false);
     setWalletModal(null);
     void disconnectSolanaSession();
@@ -631,7 +769,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       source: prev.source,
       evm: evmViewFromSession(),
     }));
-  }, [bumpAttempt, settleEvmPrompt]);
+  }, [bumpAttempt, markSelfTeardown, settleEvmPrompt]);
 
   const clearNotice = useCallback(() => {
     setState((prev) => ({ ...prev, notice: null }));

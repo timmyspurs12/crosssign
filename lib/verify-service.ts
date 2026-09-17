@@ -2,7 +2,6 @@ import type { ProofRecord, VerificationChallenge, WalletAccount } from "@/types"
 import { buildChallenge } from "@/lib/challenge";
 import {
   connectSolanaWallet,
-  getActiveSolanaSession,
   signMessageWithActiveWallet,
 } from "@/lib/wallet/solana";
 import { b58encode } from "@/lib/base58";
@@ -48,21 +47,23 @@ export function createChallengeForWallet(
   return buildChallenge(solanaPubkeyToHex(account.publicKey));
 }
 
-/** Sign the canonical challenge with the connected Solana wallet (Ed25519). */
+/**
+ * Sign the canonical challenge with the connected Solana wallet (Ed25519).
+ *
+ * The signature and its public key come from ONE session snapshot taken in
+ * the wallet layer — the caller binds them to the attempt's account and to
+ * the challenge, so a channel that somehow swapped wallets mid-call is
+ * detected as a mismatch instead of being accepted.
+ */
 export async function signLiveChallenge(message: string): Promise<{
   signatureBase58: string;
   publicKeyBase58: string;
 }> {
-  const session = getActiveSolanaSession();
-  if (!session) {
-    throw new Error("The Solana wallet connection was lost. Please reconnect.");
-  }
-
-  const signature = await signMessageWithActiveWallet(message);
+  const signed = await signMessageWithActiveWallet(message);
 
   return {
-    signatureBase58: b58encode(signature),
-    publicKeyBase58: session.publicKey,
+    signatureBase58: b58encode(signed.signature),
+    publicKeyBase58: signed.publicKeyBase58,
   };
 }
 
@@ -90,6 +91,17 @@ export async function submitSignature(params: {
   signatureBase58: string;
 }): Promise<ProofRecord> {
   const { account, challenge, signatureBase58 } = params;
+
+  // Boundary guarantee: an EXPIRED challenge is never submitted. The UI
+  // re-mints before asking for a signature, but the user can sit on the
+  // wallet prompt past the TTL (CHALLENGE.ttlSeconds) — those bytes must not
+  // reach the contract at all (the Stylus verifier rejects them on-chain as
+  // well; this makes the client honest about it instead of "reusing" them).
+  if (Date.now() >= challenge.expiresAt) {
+    throw new Error(
+      "The verification challenge expired before it could be submitted. Nothing was submitted — start a new verification.",
+    );
+  }
 
   const signatureHex = signatureBase58ToHex(signatureBase58);
 

@@ -19,4 +19,35 @@ node shot.mjs      # screenshots (desktop + mobile) → qa/shots/*.png
 | `final.mjs` | Pre-release spot checks (success page, explorer). |
 | `wallet-state.mjs` | Wallet-state E2E (production build): Wallet Standard + EIP-6963 fake-wallet injection, connect/sign/reject/reset/account-switch/chain-switch/reload/navigation checks, hydration-error scanning, storage-hygiene assertions. Uses `@sparticuz/chromium` via `CHROMIUM_PATH` when Playwright browsers are not installed. |
 
+### `wallet-state.mjs` scenarios
+
+`S0`–`S14` cover discovery → connect → challenge → gate → sign → submit, resets,
+rejections, expiry, wallet switching, navigation/reload, storage hygiene, the
+legacy injected provider, the EVM add-chain path and ecosystem isolation.
+
+`S15`–`S20` are the wallet-state/signing regression scenarios added with the
+generation-keyed attempt fix (each one fails against the pre-fix code):
+
+| Scenario | Invariant it protects |
+|---|---|
+| `S15` | A signature prompt that never settles cannot deadlock the flow: `reset()` still allows a new explicit connect, a late signature from the cancelled attempt cannot overwrite the new attempt, and a Solana connect that outlives a reset is dropped. |
+| `S16` | An EVM connection prompt that outlives `retry()` is dropped, never adopted, and cannot be silently reused by the next attempt. |
+| `S17` | A wallet-side account switch during an in-flight signature cancels the attempt immediately (UI stops claiming the old wallet is connected), and the late signature stays inert. |
+| `S18` | A challenge that expires while the user is approving is never submitted; no stale verification state is left behind. |
+| `S19` | A signature the wallet reports as coming from a *different* key is refused before submit (injected-provider path), and the flow recovers. |
+| `S20` | A wallet prompt that outlives page navigation is not adopted by the next attempt and the stale provider is never used to submit. |
+| `S21` | **Current Wallet Standard signing shape** (`(...inputs) => Promise<outputs[]>`, what real Phantom/Solflare/Backpack/OKX ship): connect → challenge → sign → submit works, exactly one sign request, the canonical message reaches the wallet, and the wallet's current account is used. |
+| `S22` | **Pre-authorized site** (extension answers connect with no prompt): still no connection on load or on opening the selector, every connect is requested explicitly (`{ silent: false }`, never silent), and each attempt binds a fresh challenge to the wallet's *current* key. |
+| `S23` | Current-shape validation & diagnostics: a signature attributed to another key and a malformed signature are both refused before submit, and the wallet's own error text reaches the user instead of a generic message. |
+
+Fake-wallet call-convention coverage: the `phantomTest`/`backpackTest` fixtures implement
+the **superseded** `signMessage(outputs, inputs)` draft (backward compatibility), while
+`phantomModern` implements the **current** variadic spec shape like real Phantom. Both are
+exercised in the suite.
+
+Regression hooks available on `window.__test` inside the fake-wallet harness:
+`solHangSign`, `solSignDelayMs`, `solHangConnect`, `solReturnWrongKey`,
+`evmHangRequestAccounts`, `solSignStarted`, plus the release functions
+`releaseHungSigns()`, `releaseHungConnects()`, `releaseHungRequestAccounts()`.
+
 All scripts launch Chromium with `--no-sandbox` (required in containers/CI).

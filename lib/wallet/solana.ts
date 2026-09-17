@@ -45,17 +45,46 @@ interface StandardEventsFeature {
   on(event: "change", listener: () => void): () => void;
 }
 
-/** The wallet writes its response into the mutable `output` slot. */
-interface SolanaSignMessageFeature {
-  signMessage(
-    output: Array<{
-      signature?: Uint8Array;
-      signedMessage?: Uint8Array;
-      publicKey?: Uint8Array;
-    }>,
-    inputs: ReadonlyArray<{ account: StandardWalletAccount; message: Uint8Array }>,
-  ): Promise<void>;
+/**
+ * `solana:signMessage` — the Wallet Standard message-signing feature.
+ *
+ * The CURRENT standard (`@solana/wallet-standard-features`) is variadic and
+ * returns its outputs:
+ *
+ *   signMessage(...inputs: { account, message }[]) => Promise<outputs[]>
+ *
+ * An earlier draft of the standard instead handed the wallet a caller-owned
+ * output array to fill in:
+ *
+ *   signMessage(output: [], inputs: []) => Promise<void>
+ *
+ * Real wallets — Phantom, Solflare, Backpack, OKX, Coinbase, MetaMask — ship
+ * the current variadic form. Calling one of those the legacy way passes the
+ * output array as its FIRST INPUT, so the wallet never receives
+ * `{ account, message }` and the request fails inside the wallet even though
+ * connect succeeded (the signature can also land in a return value we never
+ * read). Both shapes are supported below; the convention is detected from the
+ * feature's arity, so a request is never sent twice (never a double prompt).
+ */
+interface StandardSignMessageInput {
+  account: StandardWalletAccount;
+  message: Uint8Array;
 }
+
+interface StandardSignMessageOutput {
+  signature?: Uint8Array;
+  signedMessage?: Uint8Array;
+  /**
+   * Only the legacy draft reports the signing key; the current spec has no
+   * key field (the account is the one passed in). Validated when present.
+   */
+  publicKey?: Uint8Array;
+  /** "ed25519" when the wallet states it; CrossSign only verifies Ed25519. */
+  signatureType?: string;
+}
+
+/** Deliberately loose: both drafts of the standard are callable shapes. */
+type StandardSignMessageFn = (...args: never[]) => Promise<unknown>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Session — the wallet the user explicitly chose
@@ -313,7 +342,13 @@ async function connectWalletStandard(entry: WalletEntry): Promise<void> {
 
   let accounts: readonly StandardWalletAccount[];
   try {
-    ({ accounts } = await connect.connect());
+    // `silent: false` is the standard's default, but it is stated explicitly:
+    // CrossSign never asks a wallet for a silent (non-interactive) connect, so
+    // a site that is not authorized yet always gets an approval prompt. When
+    // the extension HAS already authorized this site, Wallet Standard lets it
+    // answer without prompting — that is extension-level state no dapp can or
+    // should bypass; see the module docs.
+    ({ accounts } = await connect.connect({ silent: false }));
   } catch (err) {
     throw toWalletError(err, `Connection was rejected in ${wallet.name}.`, `Could not connect to ${wallet.name}.`);
   }
@@ -324,7 +359,7 @@ async function connectWalletStandard(entry: WalletEntry): Promise<void> {
   }
 
   const signMessage = wallet.features["solana:signMessage"] as
-    | SolanaSignMessageFeature
+    | { signMessage: StandardSignMessageFn }
     | undefined;
   if (!signMessage) {
     throw new WalletError(`${wallet.name} cannot sign messages.`);
@@ -349,24 +384,67 @@ async function connectWalletStandard(entry: WalletEntry): Promise<void> {
     publicKey,
     sign: async (message: string) => {
       const bytes = new TextEncoder().encode(message);
-      const output: Array<{
-        signature?: Uint8Array;
-        signedMessage?: Uint8Array;
-        publicKey?: Uint8Array;
-      }> = [{}];
+      let output: StandardSignMessageOutput;
       try {
-        await signMessage.signMessage(output, [{ account, message: bytes }]);
+        // Re-read the wallet's CURRENT accounts before asking it to sign. The
+        // key the challenge was bound to must be the key the wallet signs
+        // with: Wallet Standard publishes only the currently authorized
+        // accounts, so this is the wallet confirming "still connected as this
+        // key". If the account is gone, or its key no longer matches, the
+        // session is stale — refuse, never sign with a cached key.
+        let signAccount: StandardWalletAccount = account;
+        if (wallet.accounts.length > 0) {
+          const live = wallet.accounts.find(
+            (candidate) => candidate.address === account.address,
+          );
+          if (!live) {
+            throw new WalletError(
+              `${wallet.name} no longer has the connected account. Please reconnect.`,
+            );
+          }
+          const liveKey =
+            live.publicKey && live.publicKey.byteLength > 0
+              ? b58encode(new Uint8Array(live.publicKey))
+              : live.address;
+          if (liveKey !== publicKey) {
+            throw new WalletError(
+              `${wallet.name} changed the key of the connected account. Please reconnect.`,
+            );
+          }
+          signAccount = live;
+        }
+
+        output = await requestStandardSignature({
+          walletName: wallet.name,
+          signMessage: signMessage.signMessage,
+          account: signAccount,
+          message: bytes,
+        });
       } catch (err) {
         throw toWalletError(err, `Signature was rejected in ${wallet.name}.`, `Signing failed in ${wallet.name}.`);
       }
-      const signature = output[0]?.signature;
-      if (!signature) {
+
+      const signature = output.signature;
+      if (!signature || signature.byteLength === 0) {
         throw new WalletError(`${wallet.name} did not return a signature.`);
       }
-      // Defence in depth: the wallet's signed-for key must be the key we
-      // asked for — never trust a response that doesn't match the request.
-      if (output[0].publicKey && output[0].publicKey.byteLength > 0) {
-        const signedKey = b58encode(new Uint8Array(output[0].publicKey));
+      // Ed25519 only: the Stylus verifier reconstructs the canonical message
+      // and checks a 64-byte Ed25519 signature over it.
+      if (signature.byteLength !== 64) {
+        throw new WalletError(
+          `${wallet.name} returned a malformed signature (${signature.byteLength} bytes, expected 64).`,
+        );
+      }
+      if (output.signatureType && output.signatureType !== "ed25519") {
+        throw new WalletError(
+          `${wallet.name} returned a ${output.signatureType} signature — CrossSign verifies Ed25519.`,
+        );
+      }
+      // Defence in depth: when the wallet reports which key it signed with
+      // (legacy draft), it must be the key we asked for — never trust a
+      // response that doesn't match the request.
+      if (output.publicKey && output.publicKey.byteLength > 0) {
+        const signedKey = b58encode(new Uint8Array(output.publicKey));
         if (signedKey !== publicKey) {
           throw new WalletError(
             `${wallet.name} signed with a different account than the one connected. Please retry.`,
@@ -442,6 +520,16 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
           new TextEncoder().encode(message),
           "utf8",
         );
+        // Defence in depth (same rule as the Wallet-Standard path above):
+        // when the provider reports which key it signed with, it MUST be the
+        // key this session is bound to. A wallet that answers from another
+        // account must never have its signature attributed to this one.
+        const signedKey = response.publicKey?.toString();
+        if (signedKey && signedKey !== publicKey) {
+          throw new WalletError(
+            `${descriptor.name} signed with a different account than the one connected. Please retry.`,
+          );
+        }
         return response.signature;
       } catch (err) {
         throw toWalletError(err, `Signature was rejected in ${descriptor.name}.`, `Signing failed in ${descriptor.name}.`);
@@ -483,15 +571,95 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Sign a message with the wallet the user connected. Returns the raw 64-byte
- * Ed25519 signature. Throws `WalletError` when the session is gone or the
- * user rejects the signature.
+ * Ask a Wallet Standard wallet to sign one message, supporting BOTH drafts of
+ * the `solana:signMessage` feature (see the interface docs above).
+ *
+ * The convention is chosen from the feature's arity so exactly ONE request is
+ * ever issued — a dapp must never risk prompting the user twice for the same
+ * signature. `(...inputs)` (the current spec) has arity 0; the legacy
+ * `(output, inputs)` form has arity 2. A wallet that disguises its arity is
+ * handled after the fact (spilled output slot, or a retry that is only
+ * possible when the first call threw a TypeError — i.e. before any prompt).
  */
-export async function signMessageWithActiveWallet(message: string): Promise<Uint8Array> {
-  if (!activeSession) {
+async function requestStandardSignature(params: {
+  walletName: string;
+  signMessage: StandardSignMessageFn;
+  account: StandardWalletAccount;
+  message: Uint8Array;
+}): Promise<StandardSignMessageOutput> {
+  const { walletName, signMessage, account, message } = params;
+  const input: StandardSignMessageInput = { account, message };
+
+  // The legacy draft has the caller pre-allocate one output slot per input and
+  // the wallet fills it in (an empty array makes wallets write `output[0]` of
+  // `undefined`).
+  const callLegacyDraft = async (): Promise<StandardSignMessageOutput[]> => {
+    const outputs: StandardSignMessageOutput[] = [{}];
+    await signMessage(outputs as never, [input] as never);
+    return outputs;
+  };
+
+  let returned: unknown;
+
+  if (signMessage.length >= 2) {
+    returned = await callLegacyDraft();
+  } else {
+    try {
+      returned = await signMessage(input as never);
+    } catch (err) {
+      // A TypeError means the wallet rejected the arguments (it never reached
+      // the user), so a single retry through the legacy convention cannot
+      // double-prompt. User rejections are never TypeErrors and propagate.
+      if (!(err instanceof TypeError) || isUserRejection(err)) throw err;
+      returned = await callLegacyDraft();
+    }
+    if (returned === undefined || returned === null) {
+      // A legacy implementation that hides its arity but still wrote into the
+      // first argument it was handed.
+      const spilled = (input as unknown as Record<number, StandardSignMessageOutput>)[0];
+      if (spilled && spilled.signature) returned = [spilled];
+    }
+  }
+
+  const list: StandardSignMessageOutput[] = Array.isArray(returned)
+    ? (returned as StandardSignMessageOutput[])
+    : returned && typeof returned === "object"
+      ? [returned as StandardSignMessageOutput]
+      : [];
+
+  const output = list.find((candidate) => candidate && candidate.signature) ?? list[0];
+  if (!output || typeof output !== "object" || !output.signature) {
+    throw new WalletError(`${walletName} did not return a signature.`);
+  }
+  return output;
+}
+
+/** Result of a wallet signature: the bytes AND the key they belong to. */
+export interface SignedSolanaMessage {
+  /** Raw 64-byte Ed25519 signature produced by the wallet. */
+  signature: Uint8Array;
+  /** Base58 public key of the session that produced it (same snapshot). */
+  publicKeyBase58: string;
+}
+
+/**
+ * Sign a message with the wallet the user connected.
+ *
+ * The active session is read ONCE: the signature and the public key it is
+ * reported under come from the same snapshot, so a wallet that is replaced
+ * while the signature request is pending can never be reported as the
+ * signer. Throws `WalletError` when the session is gone or the user rejects
+ * the signature.
+ */
+export async function signMessageWithActiveWallet(
+  message: string,
+): Promise<SignedSolanaMessage> {
+  const session = activeSession;
+  if (!session) {
     throw new WalletError("The Solana wallet connection was lost. Please reconnect.");
   }
-  return activeSession.sign(message);
+  const signature = await session.sign(message);
+  return { signature, publicKeyBase58: session.publicKey };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,5 +669,15 @@ export async function signMessageWithActiveWallet(message: string): Promise<Uint
 function toWalletError(err: unknown, rejectedMessage: string, fallbackMessage: string): WalletError {
   if (isUserRejection(err)) return new WalletError(rejectedMessage, true);
   if (err instanceof WalletError) return err;
-  return new WalletError(fallbackMessage);
+  // Never swallow the wallet's own diagnosis: a bare "Signing failed in X."
+  // hides the one line that explains a real-browser failure. The original
+  // error is logged whole and its message is appended to the user-facing one.
+  console.warn(`[crosssign] ${fallbackMessage}`, err);
+  const cause =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+  return new WalletError(cause ? `${fallbackMessage} ${cause}` : fallbackMessage);
 }
