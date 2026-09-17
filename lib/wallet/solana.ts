@@ -442,6 +442,16 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
           new TextEncoder().encode(message),
           "utf8",
         );
+        // Defence in depth (same rule as the Wallet-Standard path above):
+        // when the provider reports which key it signed with, it MUST be the
+        // key this session is bound to. A wallet that answers from another
+        // account must never have its signature attributed to this one.
+        const signedKey = response.publicKey?.toString();
+        if (signedKey && signedKey !== publicKey) {
+          throw new WalletError(
+            `${descriptor.name} signed with a different account than the one connected. Please retry.`,
+          );
+        }
         return response.signature;
       } catch (err) {
         throw toWalletError(err, `Signature was rejected in ${descriptor.name}.`, `Signing failed in ${descriptor.name}.`);
@@ -482,16 +492,32 @@ async function connectInjected(entry: WalletEntry): Promise<void> {
 // Sign (message-only — never a transaction)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Result of a wallet signature: the bytes AND the key they belong to. */
+export interface SignedSolanaMessage {
+  /** Raw 64-byte Ed25519 signature produced by the wallet. */
+  signature: Uint8Array;
+  /** Base58 public key of the session that produced it (same snapshot). */
+  publicKeyBase58: string;
+}
+
 /**
- * Sign a message with the wallet the user connected. Returns the raw 64-byte
- * Ed25519 signature. Throws `WalletError` when the session is gone or the
- * user rejects the signature.
+ * Sign a message with the wallet the user connected.
+ *
+ * The active session is read ONCE: the signature and the public key it is
+ * reported under come from the same snapshot, so a wallet that is replaced
+ * while the signature request is pending can never be reported as the
+ * signer. Throws `WalletError` when the session is gone or the user rejects
+ * the signature.
  */
-export async function signMessageWithActiveWallet(message: string): Promise<Uint8Array> {
-  if (!activeSession) {
+export async function signMessageWithActiveWallet(
+  message: string,
+): Promise<SignedSolanaMessage> {
+  const session = activeSession;
+  if (!session) {
     throw new WalletError("The Solana wallet connection was lost. Please reconnect.");
   }
-  return activeSession.sign(message);
+  const signature = await session.sign(message);
+  return { signature, publicKeyBase58: session.publicKey };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
