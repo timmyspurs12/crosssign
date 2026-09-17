@@ -36,6 +36,14 @@ generation-keyed attempt fix (each one fails against the pre-fix code):
 | `S18` | A challenge that expires while the user is approving is never submitted; no stale verification state is left behind. |
 | `S19` | A signature the wallet reports as coming from a *different* key is refused before submit (injected-provider path), and the flow recovers. |
 | `S20` | A wallet prompt that outlives page navigation is not adopted by the next attempt and the stale provider is never used to submit. |
+| `S21` | **Current Wallet Standard signing shape** (`(...inputs) => Promise<outputs[]>`, what real Phantom/Solflare/Backpack/OKX ship): connect → challenge → sign → submit works, exactly one sign request, the canonical message reaches the wallet, and the wallet's current account is used. |
+| `S22` | **Pre-authorized site** (extension answers connect with no prompt): still no connection on load or on opening the selector, every connect is requested explicitly (`{ silent: false }`, never silent), and each attempt binds a fresh challenge to the wallet's *current* key. |
+| `S23` | Current-shape validation & diagnostics: a signature attributed to another key and a malformed signature are both refused before submit, and the wallet's own error text reaches the user instead of a generic message. |
+
+Fake-wallet call-convention coverage: the `phantomTest`/`backpackTest` fixtures implement
+the **superseded** `signMessage(outputs, inputs)` draft (backward compatibility), while
+`phantomModern` implements the **current** variadic spec shape like real Phantom. Both are
+exercised in the suite.
 
 Regression hooks available on `window.__test` inside the fake-wallet harness:
 `solHangSign`, `solSignDelayMs`, `solHangConnect`, `solReturnWrongKey`,

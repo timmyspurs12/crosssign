@@ -53,6 +53,13 @@ const TITLES = {
     eyebrow: "Solana",
     title: "Connect Solana wallet",
     hint: "Signs the CrossSign challenge (Ed25519). No funds move.",
+    /**
+     * Honest expectation-setting: a Wallet Standard wallet may answer a
+     * connect instantly when the EXTENSION already authorized this site
+     * (extension-level state no dapp can revoke). CrossSign still re-reads
+     * the current public key and mints a fresh challenge for every attempt.
+     */
+    note: "Your wallet may not ask for approval again if you already authorized this site — CrossSign always re-reads your current public key and creates a fresh challenge.",
   },
   evm: {
     eyebrow: "Arbitrum",
@@ -168,6 +175,11 @@ export function WalletSelectorModal() {
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
               {meta.hint}
             </p>
+            {"note" in meta && meta.note && (
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-faint">
+                {meta.note}
+              </p>
+            )}
           </div>
           <button
             onClick={closeWalletModal}

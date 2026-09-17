@@ -124,8 +124,9 @@ function instrument(page, scenario) {
 
 const FAKE_WALLETS = /* js */ `(() => {
   const cfg = Object.assign({
-    phantomTest: false,   // Wallet Standard "Phantom Test"
-    backpackTest: false,  // Wallet Standard "Backpack Test"
+    phantomTest: false,   // Wallet Standard "Phantom Test" (LEGACY draft shape)
+    backpackTest: false,  // Wallet Standard "Backpack Test" (LEGACY draft shape)
+    phantomModern: false, // Wallet Standard "Phantom" (CURRENT spec shape, like real Phantom)
     solflareLegacy: false,// legacy injected window.solflare
     metamock: false,      // EIP-6963 "MetaMock"
     rabbyMock: false,     // EIP-6963 "RabbyMock"
@@ -162,8 +163,15 @@ const FAKE_WALLETS = /* js */ `(() => {
     solHangSign: false,        // signature request never settles on its own
     solSignDelayMs: 0,         // …or settles after N ms (slow approval)
     solHangConnect: false,     // connection request never settles on its own
-    solReturnWrongKey: false,  // injected provider reports a foreign signer key
+    solReturnWrongKey: false,  // wallet/provider reports a foreign signer key
+    solShortSignature: false,  // wallet returns a malformed (non-64-byte) signature
+    solSignError: null,        // wallet throws this exact error on sign
     evmHangRequestAccounts: false, // eth_requestAccounts never settles
+    // Call conventions observed at the wallet boundary
+    solSignStyle: null,        // "legacy-draft" | "variadic" (current spec)
+    solLastConnectInput: undefined, // argument the wallet got on standard:connect
+    solLastAccountIsLive: null,     // did the sign request use wallet.accounts[0]?
+    solConnectArgsMissing: 0,       // connects invoked with NO input argument
   };
   // Prompts left pending by the hang hooks above, released by the test.
   const pending = { signs: [], connects: [], evmAccounts: [] };
@@ -191,8 +199,10 @@ const FAKE_WALLETS = /* js */ `(() => {
       accounts: [account],
       features: {
         "standard:connect": {
-          connect: async () => {
+          connect: async (input) => {
             window.__test.solConnectedCount++;
+            window.__test.solLastConnectInput = input === undefined ? null : JSON.parse(JSON.stringify(input));
+            if (input === undefined) window.__test.solConnectArgsMissing++;
             window.__log.solana.push("connect:" + name);
             if (window.__test.solRejectConnect) {
               const e = new Error("User rejected the request."); e.code = 4001; throw e;
@@ -210,17 +220,21 @@ const FAKE_WALLETS = /* js */ `(() => {
             return () => { listeners[event] = (listeners[event] || []).filter((l) => l !== listener); };
           },
         },
+        // SUPERSEDED draft shape: signMessage(outputs, inputs) => Promise<void>
         "solana:signMessage": {
           signMessage: async (output, inputs) => {
             const msg = new TextDecoder().decode(inputs[0].message);
             window.__test.solSignCount++;
+            window.__test.solSignStyle = "legacy-draft";
             window.__test.solLastMessage = msg;
             window.__test.solLastWallet = name;
+            window.__test.solLastAccountIsLive = inputs[0].account === wallet.accounts[0];
             window.__test.solSignStarted = true;
             window.__log.solana.push("signMessage:" + name);
             if (window.__test.solRejectSign) {
               const e = new Error("User rejected the signature request"); e.code = 4001; throw e;
             }
+            if (window.__test.solSignError) throw new Error(window.__test.solSignError);
             await hangIf(window.__test.solHangSign, pending.signs);
             await delay(window.__test.solSignDelayMs);
             const sig = new Uint8Array(64).fill((seed % 251) + 3);
@@ -243,9 +257,113 @@ const FAKE_WALLETS = /* js */ `(() => {
     return wallet;
   }
 
+  // ── Solana Wallet Standard fake: CURRENT spec shape (like real Phantom) ────
+  // 'solana:signMessage' is variadic and RETURNS its outputs:
+  //     signMessage(...inputs: { account, message }[]) => Promise<outputs[]>
+  // This is what Phantom/Solflare/Backpack/OKX/Coinbase/MetaMask ship. A dapp
+  // that still calls the superseded draft — signMessage(outputs, inputs) —
+  // hands the wallet an array where it expects { account, message }; the
+  // wallet throws and the flow fails even though connect succeeded.
+  function makeModernStandardWallet(name, seed) {
+    const bytes = new Uint8Array(32).fill(seed);
+    const address = b58(bytes);
+    const makeAccount = (b) => ({
+      address: b58(b), publicKey: b, label: name + " account",
+      namespace: "solana", features: ["solana:signMessage"],
+    });
+    const account = makeAccount(bytes);
+    const listeners = {};
+    const wallet = {
+      name,
+      icon: "data:image/svg+xml;base64,AAAA",
+      version: "1.0.0",
+      chains: ["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
+      accounts: [account],
+      features: {
+        "standard:connect": {
+          // Real extension behaviour: if the site is already authorized (or the
+          // user approves), the promise resolves with the CURRENT accounts.
+          // A dapp requesting { silent: true } may be answered without any UI.
+          connect: async (input) => {
+            window.__test.solConnectedCount++;
+            window.__test.solLastConnectInput = input === undefined ? null : JSON.parse(JSON.stringify(input));
+            if (input === undefined) window.__test.solConnectArgsMissing++;
+            window.__log.solana.push("connect:" + name);
+            if (window.__test.solRejectConnect) {
+              const e = new Error("User rejected the request."); e.code = 4001; throw e;
+            }
+            await hangIf(window.__test.solHangConnect, pending.connects);
+            return { accounts: wallet.accounts };
+          },
+        },
+        "standard:disconnect": {
+          disconnect: async () => { window.__log.solana.push("disconnect:" + name); },
+        },
+        "standard:events": {
+          on: (event, listener) => {
+            (listeners[event] ||= []).push(listener);
+            return () => { listeners[event] = (listeners[event] || []).filter((l) => l !== listener); };
+          },
+        },
+        // CURRENT Wallet Standard shape: (...inputs) => Promise<outputs[]>
+        "solana:signMessage": {
+          version: "1.1.0",
+          signMessage: async (...inputs) => {
+            const input = inputs[0];
+            // What a conforming variadic wallet does when handed legacy-shaped
+            // arguments (the output array as "input"): it cannot read
+            // account/message, so it throws before any prompt appears.
+            if (!input || typeof input !== "object" || !(input.message instanceof Uint8Array)) {
+              throw new TypeError("solana:signMessage expects { account, message } inputs");
+            }
+            window.__test.solSignCount++;
+            window.__test.solSignStyle = "variadic";
+            window.__test.solLastMessage = new TextDecoder().decode(input.message);
+            window.__test.solLastWallet = name;
+            // Proof the app re-read the wallet's CURRENT account for signing.
+            window.__test.solLastAccountIsLive = input.account === wallet.accounts[0];
+            window.__test.solSignStarted = true;
+            window.__log.solana.push("signMessage:" + name);
+            if (window.__test.solRejectSign) {
+              const e = new Error("User rejected the signature request"); e.code = 4001; throw e;
+            }
+            if (window.__test.solSignError) throw new Error(window.__test.solSignError);
+            await hangIf(window.__test.solHangSign, pending.signs);
+            await delay(window.__test.solSignDelayMs);
+            return inputs.map((i) => ({
+              signature: window.__test.solShortSignature
+                ? new Uint8Array(32).fill(0x77) // malformed on purpose
+                : new Uint8Array(64).fill((seed % 251) + 3),
+              signedMessage: i.message,
+              // The current spec has no key field; a wallet MAY report one, and
+              // CrossSign must still validate it when present.
+              ...(window.__test.solReturnWrongKey
+                ? { publicKey: new Uint8Array(32).fill(0x99) }
+                : { publicKey: i.account.publicKey }),
+            }));
+          },
+        },
+      },
+      // test hooks
+      __emitChange() { for (const l of listeners.change || []) { try { l(); } catch {} } },
+      __removeAccount() { wallet.accounts.length = 0; wallet.__emitChange(); },
+      __replaceAccount(seed2) {
+        wallet.accounts[0] = makeAccount(new Uint8Array(32).fill(seed2));
+        wallet.__emitChange();
+      },
+      /** The extension switching accounts BETWEEN app sessions (no event). */
+      __setAccountSilently(seed2) {
+        wallet.accounts[0] = makeAccount(new Uint8Array(32).fill(seed2));
+      },
+      __pubkeyHex: () => hex(wallet.accounts[0].publicKey),
+    };
+    return wallet;
+  }
+
   const standardWallets = [];
   if (cfg.phantomTest) standardWallets.push(makeStandardWallet("Phantom Test", 0x11));
   if (cfg.backpackTest) standardWallets.push(makeStandardWallet("Backpack Test", 0x22));
+  if (cfg.phantomModern) standardWallets.push(makeModernStandardWallet("Phantom", 0x44));
 
   const register = (api) => { for (const w of standardWallets) api.register(w); };
   window.addEventListener("wallet-standard:app-ready", (ev) => register(ev.detail));
@@ -1353,6 +1471,172 @@ await withBudget("scenario", (async () => {
   });
  } catch (err) {
   fail("S20 scenario", String((err && err.message) || err).split("\n")[0]);
+ }
+})());
+
+// ═══ S21: CURRENT Wallet Standard signing shape (what real Phantom ships) ═══
+// Reproduces the real-browser failure: Phantom connects, then the signature
+// request fails inside the wallet because the app calls the superseded
+// `signMessage(outputs, inputs)` draft instead of the standard
+// `signMessage({ account, message }) => Promise<outputs[]>`.
+console.log("\n[S21] current Wallet Standard signMessage shape (real-Phantom style)");
+await withBudget("scenario", (async () => {
+ try {
+  const { context, page, instr } = await openPage(browserRef, { phantomModern: true, metamock: true });
+  await step("open /verify", () => goto(page, "/verify"));
+
+  await check(page, "S21 no wallet is contacted before the user explicitly picks one", async () => {
+    assert((await page.evaluate(() => window.__test.solConnectedCount)) === 0, "connected without an explicit selection");
+    assert(await isVisible(page, "Connect Solana wallet"), "expected the idle connect state");
+  });
+
+  await step("connect Phantom", () => connectSolana(page, "Phantom"));
+  await step("wait connected", () => page.waitForSelector("text=Ready to sign", { timeout: 5000 }));
+
+  await check(page, "S21 connect is requested explicitly (never a silent connect)", async () => {
+    const input = await page.evaluate(() => window.__test.solLastConnectInput);
+    assert(input && input.silent === false, `expected { silent: false }, wallet got ${JSON.stringify(input)}`);
+  });
+  await check(page, "S21 challenge binds the wallet's current public key", async () => {
+    const walletHex = await page.evaluate(() => window.__test.standardWallets()[0].__pubkeyHex());
+    const msg = await page.locator("pre").first().textContent();
+    assert(msg.includes(`wallet=${walletHex}`), "challenge not bound to the connected pubkey");
+  });
+
+  await step("switch MetaMask chain", () =>
+    page.evaluate(() => { const p = window.__test.announced()[0].provider; p.__switchTo(421614); }));
+  await step("connect MetaMask", () => connectEvm(page, "MetaMask"));
+  await step("wait chain ready", () =>
+    page.getByText("Arbitrum Sepolia", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }));
+
+  await check(page, "S21 signing works with the CURRENT spec shape (the real-Phantom failure)", async () => {
+    await btn(page, "Sign verification").click();
+    await page.waitForSelector('a:has-text("View verification")', { timeout: 20000 });
+    const style = await page.evaluate(() => window.__test.solSignStyle);
+    assert(style === "variadic", `wallet was called the wrong way (saw: ${style})`);
+    assert((await page.evaluate(() => window.__test.solSignCount)) === 1, "expected exactly one signature request");
+    const msg = await page.evaluate(() => window.__test.solLastMessage);
+    const walletHex = await page.evaluate(() => window.__test.standardWallets()[0].__pubkeyHex());
+    assert(msg && msg.includes(`wallet=${walletHex}`), "the wallet never received the canonical challenge message");
+    assert(await page.evaluate(() => window.__test.solLastAccountIsLive), "signing used a cached account, not the wallet's current one");
+    assert((await page.evaluate(() => window.__test.evmTxCount)) === 1, "expected exactly one on-chain submit");
+    await instr.assertClean();
+  });
+ } catch (err) {
+  fail("S21 scenario", String((err && err.message) || err).split("\n")[0]);
+ }
+})());
+
+// ═══ S22: the extension already authorized the site (no approval prompt) ═══
+// The behaviour a real Phantom/OKX user sees: picking the wallet connects
+// instantly because the EXTENSION remembers the site. CrossSign must still
+// require an explicit selection, ask for an explicit (never silent) connect,
+// start a fresh attempt and bind the challenge to the wallet's CURRENT key.
+console.log("\n[S22] pre-authorized site — explicit connect, fresh key, no adopted session");
+await withBudget("scenario", (async () => {
+ try {
+  const { context, page, instr } = await openPage(browserRef, { phantomModern: true });
+  await step("open /verify", () => goto(page, "/verify"));
+
+  await check(page, "S22 page load adopts no session, even with an authorized wallet", async () => {
+    assert((await page.evaluate(() => window.__test.solConnectedCount)) === 0, "the extension was contacted without user action");
+    assert(await isVisible(page, "Connect Solana wallet"), "expected the idle connect state");
+  });
+  await check(page, "S22 opening the selector does not connect either", async () => {
+    await btn(page, "Connect Solana wallet").click();
+    await page.waitForSelector('[role="dialog"]');
+    await page.waitForTimeout(400);
+    assert((await page.evaluate(() => window.__test.solConnectedCount)) === 0, "opening the selector connected a wallet");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(150);
+  });
+
+  // The extension changed accounts since the last visit (no CrossSign event).
+  await page.evaluate(() => window.__test.standardWallets()[0].__setAccountSilently(0x77));
+  await step("connect Phantom", () => connectSolana(page, "Phantom"));
+  await step("wait connected", () => page.waitForSelector("text=Ready to sign", { timeout: 5000 }));
+
+  await check(page, "S22 a fresh attempt binds the wallet's CURRENT key, not a remembered one", async () => {
+    const walletHex = await page.evaluate(() => window.__test.standardWallets()[0].__pubkeyHex());
+    const msg = await page.locator("pre").first().textContent();
+    assert(msg.includes(`wallet=${walletHex}`), "challenge is not bound to the wallet's current key");
+  });
+  await check(page, "S22 every connect request is explicit — CrossSign never asks for a silent connect", async () => {
+    const args = await page.evaluate(() => ({
+      missing: window.__test.solConnectArgsMissing,
+      last: window.__test.solLastConnectInput,
+    }));
+    assert(args.missing === 0, `${args.missing} connect call(s) were made without an explicit input`);
+    assert(args.last && args.last.silent === false, `expected an explicit non-silent connect, got ${JSON.stringify(args.last)}`);
+  });
+  await check(page, "S22 re-selecting the wallet is a new explicit connection with a NEW challenge", async () => {
+    const nonce1 = await getNonce(page);
+    await btn(page, "Change").first().click();
+    await page.waitForSelector('[role="dialog"]');
+    assert(await page.locator('[role="dialog"] button:has-text("Phantom")').count() > 0, "the wallet must be re-selectable");
+    await page.locator('[role="dialog"] button:has-text("Phantom")').first().click();
+    await page.waitForSelector("text=Ready to sign", { timeout: 5000 });
+    const nonce2 = await getNonce(page);
+    assert(nonce1 && nonce2 && nonce1 !== nonce2, `challenge was reused across attempts (${nonce1} → ${nonce2})`);
+    assert((await page.evaluate(() => window.__test.solConnectedCount)) === 2, "each explicit selection must connect");
+    const walletHex = await page.evaluate(() => window.__test.standardWallets()[0].__pubkeyHex());
+    const msg = await page.locator("pre").first().textContent();
+    assert(msg.includes(`wallet=${walletHex}`), "challenge not re-bound to the current key");
+    await instr.assertClean();
+  });
+ } catch (err) {
+  fail("S22 scenario", String((err && err.message) || err).split("\n")[0]);
+ }
+})());
+
+// ═══ S23: validation + diagnostics on the current-shape path ═══
+console.log("\n[S23] current-shape signer validation and error surfacing");
+await withBudget("scenario", (async () => {
+ try {
+  const { context, page, instr } = await openPage(browserRef, { phantomModern: true, metamock: true });
+  await step("open /verify", () => goto(page, "/verify"));
+  await step("connect Phantom", () => connectSolana(page, "Phantom"));
+  await step("wait connected", () => page.waitForSelector("text=Ready to sign", { timeout: 5000 }));
+  await step("switch MetaMask chain", () =>
+    page.evaluate(() => { const p = window.__test.announced()[0].provider; p.__switchTo(421614); }));
+  await step("connect MetaMask", () => connectEvm(page, "MetaMask"));
+  await step("wait chain ready", () =>
+    page.getByText("Arbitrum Sepolia", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }));
+
+  await check(page, "S23 a signature the wallet attributes to another key is refused before submit", async () => {
+    await page.evaluate(() => { window.__test.solReturnWrongKey = true; });
+    await btn(page, "Sign verification").click();
+    await page.waitForSelector("text=/different account/i", { timeout: 6000 });
+    assert((await page.evaluate(() => window.__test.evmTxCount)) === 0, "foreign-key signature was submitted");
+    assert(!(await isVisible(page, "Identity verified")), "foreign-key signature verified");
+  });
+
+  await check(page, "S23 a malformed (wrong-length) signature is refused", async () => {
+    await page.evaluate(() => { window.__test.solReturnWrongKey = false; window.__test.solShortSignature = true; });
+    await btn(page, "Try again").click();
+    await connectSolana(page, "Phantom");
+    await page.waitForSelector("text=Ready to sign", { timeout: 5000 });
+    await btn(page, "Sign verification").click();
+    await page.waitForSelector("text=/malformed signature/i", { timeout: 6000 });
+    assert((await page.evaluate(() => window.__test.evmTxCount)) === 0, "malformed signature was submitted");
+  });
+
+  await check(page, "S23 the wallet's own error text reaches the user (not swallowed)", async () => {
+    await page.evaluate(() => {
+      window.__test.solShortSignature = false;
+      window.__test.solSignError = "Phantom: signing is unavailable for this account (E-4417)";
+    });
+    await btn(page, "Try again").click();
+    await connectSolana(page, "Phantom");
+    await page.waitForSelector("text=Ready to sign", { timeout: 5000 });
+    await btn(page, "Sign verification").click();
+    await page.waitForSelector("text=/E-4417/", { timeout: 6000 });
+    assert((await page.evaluate(() => window.__test.evmTxCount)) === 0, "a failed sign must not submit");
+    await page.evaluate(() => { window.__test.solSignError = null; });
+    await instr.assertClean();
+  });
+ } catch (err) {
+  fail("S23 scenario", String((err && err.message) || err).split("\n")[0]);
  }
 })());
 
