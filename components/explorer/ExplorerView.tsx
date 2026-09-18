@@ -8,6 +8,7 @@ import { IdentityBadge } from "@/components/badge/IdentityBadge";
 import { formatDateTime, seededHex, truncateMiddle } from "@/lib/utils";
 import { chainLabel, explorerUrl } from "@/lib/proof-format";
 import { latestProofs } from "@/lib/registry";
+import { ChainLookup } from "@/components/explorer/ChainLookup";
 import { VERIFICATION_METHOD_LABEL } from "@/lib/config";
 import { buildProofRecord } from "@/lib/proof-format";
 import type { ProofRecord } from "@/types";
@@ -55,6 +56,8 @@ export function ExplorerView({ initialProof }: { initialProof?: ProofRecord | nu
           check that a proof is genuine.
         </p>
       </div>
+
+      <ChainLookup />
 
       {proof ? (
         <Certificate proof={proof} />

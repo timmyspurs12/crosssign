@@ -109,10 +109,21 @@ touching any UI component:
 3. **`lib/canonical.ts`** — builds the canonical message byte-for-byte
    identically to the contract (`scripts/check-canonical.mjs` cross-checks).
 4. **`lib/config.ts` → `CONTRACTS` / `NETWORK`** — contract addresses and
-   chain id come from `NEXT_PUBLIC_*` env vars (zero-address until deployed).
+   chain id come from `NEXT_PUBLIC_*` env vars. The two address reads are
+   written **statically** (`process.env.NEXT_PUBLIC_VERIFIER_ADDRESS`) because
+   Next.js only inlines a literal member access into the browser bundle — a
+   dynamic `process.env[key]` lookup silently yields `undefined` in the
+   browser in every build. When an address is missing the app falls back to the
+   zero address and **refuses to build a challenge or submit** (`/verify` shows
+   a "Live verification is disabled" notice), because a transaction to `0x0`
+   mines, reports success, emits no logs and mints nothing.
 5. **API routes** — lightweight convenience layer (`app/api/*`): challenge
-   issuance, calldata encoding, and read helpers. **Signature verification
-   happens only inside the Stylus contract**, never in the backend.
+   issuance, calldata encoding, and read helpers. The **live path builds the
+   canonical challenge in the client** (`lib/challenge.ts`) — the nonce is
+   single-use and enforced by the contract, so it does not need a server round
+   trip; `/api/challenge` is the equivalent server-side helper for other
+   callers. **Signature verification happens only inside the Stylus contract**,
+   never in the backend.
 
 ## Run
 
@@ -152,6 +163,24 @@ node shot.mjs     # page screenshots (desktop + mobile) → qa/shots/
 Manual checklist before shipping: every page at 1440/1280/1024/768/390/375,
 plus the loading / empty / error / wallet-disconnected / rejected-signature /
 transaction-pending / verification-failed states — and no placeholder text.
+
+## Deployed contracts (Arbitrum Sepolia)
+
+Live and activated. Full record: `contract/deployments/sepolia.json`.
+
+| Contract | Address | Arbiscan |
+|---|---|---|
+| **CrossSignVerifier** | `0x39db2d89cEb5b3F312C7A37459C39dA05E251d2e` | [address](https://sepolia.arbiscan.io/address/0x39db2d89ceb5b3f312c7a37459c39da05e251d2e) · [deploy](https://sepolia.arbiscan.io/tx/0x5ff9037a8d4f3fabc8c6b07e960272c11160a5a35e4bb705c1db064f90192e10) · [activate](https://sepolia.arbiscan.io/tx/0x5728fe1df632ea8ae5f1b512ade4af70833b3fa621eb975269d06ac1d58724df) |
+| **CrossSignBadgeRegistry** | `0x2862cbdc406546e457a8eb493708613fd9f7c8ac` | [address](https://sepolia.arbiscan.io/address/0x2862cbdc406546e457a8eb493708613fd9f7c8ac) · [deploy](https://sepolia.arbiscan.io/tx/0xf29d97c14ee9ecb665815e2d45aaf0e8bf69f292d7aad8cfa5eae7a6a7930625) · [activate](https://sepolia.arbiscan.io/tx/0x318b2d050e2e80cfeb1e2d2fae45a82a97d477d720b78fc1422106f4e61fd97a) |
+
+Both are **Stylus programs** (Rust → WASM): deployed with `cargo stylus deploy`
+and activated via `activateProgram`, which is why Arbiscan labels them
+"Stylus Contract". Deployer/owner: `0xf8e604137A2F4b213AC115D33fee170EB5a63282`.
+Live app: https://crosssign.vercel.app
+
+> The registry's constructor receives an initial issuer. Until
+> `scripts/chain-admin.mjs set-issuer <REGISTRY> <VERIFIER>` has been run,
+> `verify_and_issue` reverts `Unauthorized` at the mint step.
 
 ## Smart contract (`contract/`)
 
