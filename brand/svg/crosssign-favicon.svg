@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none" role="img" aria-label="CrossSign">
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="0" y="0" width="64" height="64" rx="15" fill="#16171C"/>
+    <path d="M32 12V52" stroke="#F6F5F1" stroke-opacity=".16" stroke-width="2" stroke-dasharray="3.5 5"/>
+    <path d="M15 33 25.4 43.4 50 20" stroke="#00B3A4" stroke-width="6.5"/>
+  </g>
+</svg>

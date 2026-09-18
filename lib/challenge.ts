@@ -1,5 +1,10 @@
 import { canonicalVerificationMessage, generateNonce } from "@/lib/canonical";
-import { CHALLENGE, CONTRACTS, NETWORK } from "@/lib/config";
+import {
+  CHALLENGE,
+  CONTRACTS,
+  NETWORK,
+  assertContractsConfigured,
+} from "@/lib/config";
 import type { VerificationChallenge } from "@/types";
 
 /**
@@ -12,6 +17,12 @@ import type { VerificationChallenge } from "@/types";
  * same canonical bytes the Stylus verifier reconstructs on-chain.
  */
 export function buildChallenge(walletHex: string): VerificationChallenge {
+  // The verifier address is BOUND INTO the signed message. If it is not
+  // configured, the message would bind 0x0 — a challenge the deployed verifier
+  // could never accept (it rebuilds the message with its own address). Refuse
+  // before asking the user to sign anything.
+  assertContractsConfigured();
+
   const nonce = generateNonce();
   const now = Math.floor(Date.now() / 1000);
   const expires = now + CHALLENGE.ttlSeconds;

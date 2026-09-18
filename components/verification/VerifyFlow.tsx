@@ -20,6 +20,7 @@ import { WalletCard } from "@/components/verification/WalletCard";
 import { EvmWalletRow } from "@/components/verification/EvmWalletRow";
 import { VerifyingSequence } from "@/components/verification/VerifyingSequence";
 import { useVerification } from "@/components/verification/VerificationContext";
+import { CONTRACTS_CONFIGURED, CONTRACTS_SETUP_HINT } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 export function VerifyFlow() {
@@ -40,6 +41,8 @@ export function VerifyFlow() {
   return (
     <div className="flex flex-col gap-6">
       <SourceToggle source={source} setSource={setSource} />
+
+      {!isDemo && !CONTRACTS_CONFIGURED && <ContractsNotConfiguredNotice />}
 
       <StepIndicator current={state.stepIndex} />
 
@@ -129,6 +132,27 @@ export function VerifyFlow() {
           </span>
         </p>
       )}
+    </div>
+  );
+}
+
+/* ————————————————— Contract configuration notice ————————————————— */
+
+/**
+ * Shown when the build has no deployed contract addresses.
+ *
+ * Without this the flow "succeeds" against the zero address: the transaction
+ * mines, reports success and mints nothing. Live verification is impossible
+ * until the addresses are set, so say so plainly instead of failing quietly.
+ */
+function ContractsNotConfiguredNotice() {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+      <div className="text-[12.5px] leading-relaxed text-danger">
+        <p className="font-medium">Live verification is disabled.</p>
+        <p className="mt-0.5 text-danger/90">{CONTRACTS_SETUP_HINT}</p>
+      </div>
     </div>
   );
 }
@@ -239,7 +263,10 @@ function ConnectState({
           size="lg"
           variant="accent"
           onClick={onStart}
-          disabled={busy}
+          // A live attempt cannot succeed without deployed addresses, so the
+          // CTA is disabled rather than leading the user into a no-op
+          // transaction against the zero address.
+          disabled={busy || (!isDemo && !CONTRACTS_CONFIGURED)}
         >
           {busy ? (
             <>

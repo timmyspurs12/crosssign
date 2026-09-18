@@ -24,7 +24,7 @@ import {
   type OnChainBadge,
   type OnChainVerification,
 } from "@/lib/contract-abi";
-import { CONTRACTS, NETWORK } from "@/lib/config";
+import { CONTRACTS, NETWORK, assertContractsConfigured } from "@/lib/config";
 import { getActiveEvmProvider } from "@/lib/wallet/evm";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +62,7 @@ export async function readIsVerified(
   account: string,
   provider?: JsonRpcProvider,
 ): Promise<boolean> {
+  assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
   return verifier.is_verified(account);
@@ -71,6 +72,7 @@ export async function readVerification(
   account: string,
   provider?: JsonRpcProvider,
 ): Promise<OnChainVerification | null> {
+  assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
   try {
@@ -85,6 +87,7 @@ export async function readBadge(
   badgeId: bigint | string,
   provider?: JsonRpcProvider,
 ): Promise<OnChainBadge | null> {
+  assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const registry = new Contract(CONTRACTS.registry, [...REGISTRY_ABI], p);
   try {
@@ -99,6 +102,7 @@ export async function readNonceUsed(
   nonce: string,
   provider?: JsonRpcProvider,
 ): Promise<boolean> {
+  assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
   return verifier.nonce_used(nonce);
@@ -126,6 +130,10 @@ export async function submitVerification(params: {
   signatureHex: string;
   originNetwork: string;
 }): Promise<SubmitResult> {
+  // Never submit to the zero address: that transaction would mine, report
+  // success, emit no logs and mint nothing.
+  assertContractsConfigured();
+
   const provider = getBrowserProvider();
   if (!provider) {
     throw new Error(

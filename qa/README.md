@@ -51,3 +51,42 @@ Regression hooks available on `window.__test` inside the fake-wallet harness:
 `releaseHungSigns()`, `releaseHungConnects()`, `releaseHungRequestAccounts()`.
 
 All scripts launch Chromium with `--no-sandbox` (required in containers/CI).
+
+## Running the suite (read this first)
+
+Two things bite when running these locally:
+
+**1. The app must be built with the contract addresses set.** `NEXT_PUBLIC_*`
+values are inlined into the browser bundle at **build** time — exporting them
+only for `next start` is too late. Without them the client falls back to the
+zero address, CrossSign refuses to build a live challenge, and anything that
+drives the **Live** path (rather than Interactive Demo) will fail:
+
+```bash
+cd ..                                     # repo root
+export NEXT_PUBLIC_VERIFIER_ADDRESS=0x39db2d89ceb5b3f312c7a37459c39da05e251d2e
+export NEXT_PUBLIC_REGISTRY_ADDRESS=0x2862cbdc406546e457a8eb493708613fd9f7c8ac
+export NEXT_PUBLIC_CHAIN_ID=421614
+npm run build && npm run start            # then, in another shell:
+cd qa && node wallet-state.mjs
+```
+
+`/verify` opens in **Interactive Demo** mode; `wallet-state.mjs` drives the
+**Live** path by clicking the `Live` toggle itself.
+
+**2. Playwright browsers may be unavailable.** `@sparticuz/chromium` ships a
+headless build that can be extracted without `npx playwright install`:
+
+```bash
+cd qa
+node get-chromium.mjs                                  # prints /tmp/chromium
+CHROMIUM_PATH=/tmp/chromium node wallet-state.mjs
+```
+
+On older glibc the extracted binary needs the bundled Amazon Linux 2023
+libraries. `get-chromium.mjs` documents where they are
+(`node_modules/@sparticuz/chromium/bin/al2023.tar.br`); decompress and prepend:
+
+```bash
+CHROMIUM_PATH=/tmp/chromium LD_LIBRARY_PATH="/tmp/al2023/lib:$LD_LIBRARY_PATH" node wallet-state.mjs
+```

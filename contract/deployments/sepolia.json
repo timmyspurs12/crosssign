@@ -1,0 +1,23 @@
+{
+  "network": "Arbitrum Sepolia",
+  "chainId": 421614,
+  "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
+  "registry": "0x2862cbdc406546e457a8eb493708613fd9f7c8ac",
+  "registryDeploymentTx": "0xf29d97c14ee9ecb665815e2d45aaf0e8bf69f292d7aad8cfa5eae7a6a7930625",
+  "registryActivationTx": "0x318b2d050e2e80cfeb1e2d2fae45a82a97d477d720b78fc1422106f4e61fd97a",
+  "verifier": "0x39db2d89ceb5b3f312c7a37459c39da05e251d2e",
+  "verifierDeploymentTx": "0x5ff9037a8d4f3fabc8c6b07e960272c11160a5a35e4bb705c1db064f90192e10",
+  "verifierActivationTx": "0x5728fe1df632ea8ae5f1b512ade4af70833b3fa621eb975269d06ac1d58724df",
+  "destinationNetwork": "arbitrum-sepolia",
+  "deployer": "0xf8e604137a2f4b213ac115d33fee170eb5a63282",
+  "deployedAt": "2026-09-16T10:00:56Z",
+  "deployedRegistryAt": "2026-09-16T09:44:08Z",
+  "sourceVerified": false,
+  "explorer": "https://sepolia.arbiscan.io/address/",
+  "note": "Both contracts are Arbitrum Stylus programs (Rust → WASM): deployed with `cargo stylus deploy` and activated via activateProgram, so Arbiscan labels them \"Stylus Contract\". Run `cargo stylus verify` in each crate to publish the Rust source against these addresses. Authorize the verifier to mint with `node scripts/chain-admin.mjs set-issuer <registry> <verifier>` — the registry constructor received the deployer EOA as its initial issuer, so until that call is made every verify_and_issue reverts Unauthorized at the registry.",
+  "verificationsAsOf": {
+    "date": "2026-09-18",
+    "verifyAndIssueTxs": 0,
+    "badgesIssued": 0
+  }
+}

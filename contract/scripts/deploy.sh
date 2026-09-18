@@ -2,10 +2,19 @@
 #
 # Deploy CrossSign to Arbitrum Sepolia.
 #
-# By default, this script REUSES the existing CrossSignBadgeRegistry.
-# Set FORCE_REGISTRY_DEPLOY=true only when you intentionally want
-# to deploy a completely new registry.
+# By default, this script REUSES the existing CrossSignBadgeRegistry
+# (0x2862cbDc…). Set FORCE_REGISTRY_DEPLOY=true only when you intentionally
+# want to deploy a completely new registry.
 #
+# What it does:
+#   1. reuses (or force-deploys) CrossSignBadgeRegistry
+#   2. deploys CrossSignVerifier       (constructor: registry, destination_network)
+#   3. writes deployments/sepolia.json with the addresses + tx hashes
+#   4. prints the one remaining manual step (set_issuer → verifier)
+#
+# Prerequisites (see DEPLOYMENT.md):
+#   - Rust + wasm32-unknown-unknown target, cargo-stylus installed
+#   - a funded Sepolia wallet, .env with PRIVATE_KEY set
 
 set -euo pipefail
 
@@ -34,6 +43,12 @@ FORCE_REGISTRY_DEPLOY="${FORCE_REGISTRY_DEPLOY:-false}"
 
 # Keep the key inside the project workspace so reproducible cargo-stylus
 # Docker builds can access it.
+#
+# NOTE: cargo-stylus runs from INSIDE the crate directories (we `cd registry` /
+# `cd verifier` below), so the path handed to `--private-key-path` must be
+# ABSOLUTE. A crate-relative path such as "registry/../.deploy-private-key.tmp"
+# resolves a second level too deep (contract/registry/.deploy-private-key.tmp)
+# and cargo exits with "unable to read the private key file".
 KEYFILE="$PWD/.deploy-private-key.tmp"
 
 trap 'rm -f "$KEYFILE"' EXIT
@@ -77,7 +92,7 @@ if [ "$FORCE_REGISTRY_DEPLOY" = "true" ]; then
 
     cargo stylus deploy \
       --endpoint "$RPC" \
-      --private-key-path "registry/../.deploy-private-key.tmp" \
+      --private-key-path "$KEYFILE" \
       --max-fee-per-gas-gwei "$MAX_FEE_PER_GAS_GWEI" \
       --constructor-args "$ISSUER_ADDRESS" \
       2>&1 | tee ../deployments/registry.log
@@ -113,7 +128,7 @@ echo ""
 
   cargo stylus deploy \
     --endpoint "$RPC" \
-    --private-key-path "verifier/../.deploy-private-key.tmp" \
+    --private-key-path "$KEYFILE" \
     --max-fee-per-gas-gwei "$MAX_FEE_PER_GAS_GWEI" \
     --constructor-args "$REGISTRY_ADDRESS" "$DEST_NETWORK" \
     2>&1 | tee ../deployments/verifier.log
@@ -137,6 +152,18 @@ if [ -f deployments/registry.log ]; then
       deployments/registry.log |
       tail -1 |
       sed 's/.*: //'
+  ) || true
+fi
+
+# The registry's activation tx is produced by the deploy command as well
+# ("activated contract ... with tx ..."), so record it when the log has it.
+REGISTRY_ACTIVATION_TX=""
+if [ -f deployments/registry.log ]; then
+  REGISTRY_ACTIVATION_TX=$(
+    grep -oE 'activated contract .* with tx "[0-9a-fA-F]{64}"' \
+      deployments/registry.log |
+      tail -1 |
+      sed -E 's/.* with tx "([0-9a-fA-F]{64})"/0x\1/'
   ) || true
 fi
 
@@ -167,11 +194,14 @@ node -e '
     rpc: process.argv[1],
     registry: process.argv[2],
     registryDeploymentTx: process.argv[3] || null,
-    verifier: process.argv[4],
-    verifierDeploymentTx: process.argv[5] || null,
-    verifierActivationTx: process.argv[6] || null,
-    destinationNetwork: process.argv[7],
-    deployedAt: new Date().toISOString()
+    registryActivationTx: process.argv[4] || null,
+    verifier: process.argv[5],
+    verifierDeploymentTx: process.argv[6] || null,
+    verifierActivationTx: process.argv[7] || null,
+    destinationNetwork: process.argv[8],
+    deployer: process.argv[9],
+    deployedAt: new Date().toISOString(),
+    note: "Regenerate with contract/scripts/deploy.sh. After deploying, authorize the verifier with scripts/chain-admin.mjs set-issuer, or verify_and_issue reverts Unauthorized at the registry."
   };
 
   fs.writeFileSync(
@@ -182,10 +212,12 @@ node -e '
   "$RPC" \
   "$REGISTRY_ADDRESS" \
   "$REGISTRY_DEPLOYMENT_TX" \
+  "$REGISTRY_ACTIVATION_TX" \
   "$VERIFIER" \
   "$VERIFIER_DEPLOYMENT_TX" \
   "$VERIFIER_ACTIVATION_TX" \
-  "$DEST_NETWORK"
+  "$DEST_NETWORK" \
+  "$ISSUER_ADDRESS"
 
 echo ""
 echo "=========================================="
@@ -202,7 +234,7 @@ echo "Deployment record:"
 echo "deployments/sepolia.json"
 echo ""
 
-echo "Next manual step — authorize the verifier:"
+echo "REQUIRED NEXT STEP — without it every verification reverts (Unauthorized):"
 echo ""
 echo "node scripts/chain-admin.mjs set-issuer $REGISTRY_ADDRESS $VERIFIER"
 echo ""
@@ -211,34 +243,4 @@ echo "Web app environment:"
 echo ""
 echo "NEXT_PUBLIC_VERIFIER_ADDRESS=$VERIFIER"
 echo "NEXT_PUBLIC_REGISTRY_ADDRESS=$REGISTRY_ADDRESS"
-echo ""#!/usr/bin/env bash
-#
-# Deploy CrossSign to Arbitrum Sepolia.
-#
-# Prerequisites (see DEPLOYMENT.md):
-#   - Rust + wasm32-unknown-unknown target
-#   - cargo-stylus installed:  cargo install cargo-stylus --locked
-#   - a funded Sepolia wallet (faucet: https://arbitrum.faucet.dev)
-#   - .env with PRIVATE_KEY set (copy from .env.example)
-#
-# What it does:
-#   1. deploys CrossSignBadgeRegistry   (constructor: issuer = deployer)
-#   2. deploys CrossSignVerifier        (constructor: registry, destination_network)
-#   3. writes deployments/sepolia.json with addresses
-#   4. prints the one remaining manual step (set_issuer → verifier)
-#
-set -euo pipefail
-cd "$(dirname "$0")/.."
-
-if [ -f .env ]; then set -a; source .env; set +a; fi
-: "${PRIVATE_KEY:?Set PRIVATE_KEY in .env (copy from .env.example)}"
-RPC="${RPC_URL:-https://sepolia-rollup.arbitrum.io/rpc}"
-DEST_NETWORK="${DESTINATION_NETWORK:-arbitrum-sepolia}"
-
-# Write the key to a temp file (never appears in process args / shell history).
-KEYFILE="$PWD/.deploy-private-key.tmp"
-trap 'rm -f "$KEYFILE"' EXIT
-printf '%s' "$PRIVATE_KEY" > "$KEYFILE"
-chmod 600 "$KEYFILE"
-
-# Derive the deployer address if no explicit issuer was provided.
+echo ""
