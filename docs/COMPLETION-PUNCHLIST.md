@@ -3,6 +3,20 @@
 Audited 2026-09-18 against the live deployment, the chain, and `main` (`3280ce2`).
 Ordered by what actually blocks a submission. Effort estimates are for one developer.
 
+> **Status update (branch `arena/01a0af2f-crosssign`, commit `5869d8f`).**
+> Items **2, 3, 4, 5, 6, 9, 10** and **11** are **done** and verified — see the
+> "Delivered" table below. **Item 1 still needs your key** (the `set-issuer`
+> transaction plus one real verification); **7** (source verification) and **8**
+> (gas measurement) need the Rust toolchain and two transactions, so they remain
+> yours. Item 12–15 are untouched.
+>
+> **The audit also found a deeper root cause than item 3 described** — and it was
+> live in production: `lib/config.ts` resolved the addresses through
+> `process.env[key]`, which Next.js cannot inline into the browser bundle, so the
+> client always saw `0x0000…0000` regardless of the environment. That is now
+> fixed (static reads), which is why deploy-scoped env vars alone would never have
+> worked.
+
 ---
 
 ## Already done — verified, do not redo
@@ -101,3 +115,21 @@ Both are labelled "Stylus Contract", but no source is published. Contract qualit
 4. **P1-5** icons + OG card (assets are ready), **P1-7** source-verify contracts.
 5. **P1-6** wire chain reads into the explorer — the biggest genuine feature gap.
 6. Remaining P1/P2 as time allows; then record the demo video.
+
+---
+
+## Delivered (commit `5869d8f`, pushed to `arena/01a0af2f-crosssign`)
+
+| # | Item | What changed | Verified by |
+|---|---|---|---|
+| 3 | **Zero-address no-ops** | `lib/config.ts` reads the addresses **statically** so they actually inline into the browser bundle (the dynamic `process.env[key]` lookup was the real bug). `assertContractsConfigured()` now throws before a challenge is built, before any chain read, and before any submit. `/verify` shows a "Live verification is disabled" notice with the fix and disables the live CTA; demo mode untouched. | Configured build: address present in `.next/static`, no banner, CTA enabled. Unconfigured build: banner + hint shown, CTA disabled, demo still works. |
+| 2 | **Deploy script** | Absolute `--private-key-path` (cargo-stylus runs inside the crate dir), duplicated 244-line tail removed, registry activation tx + deployer now recorded, `set-issuer` step called out as required. | Stubbed `cargo` run: old script exits 1 with "unable to read the private key file: verifier/../.deploy-private-key.tmp"; new script completes, writes the record, cleans up the key. |
+| 4 | **Deployment record** | `contract/deployments/sepolia.json` committed with the real addresses + deploy/activate tx hashes; README lists the addresses and Arbiscan links up front. | Both programs confirmed on Arbiscan as activated Stylus programs; JSON validated. |
+| 6 | **Chain reads unreachable from the UI** | New `components/explorer/ChainLookup.tsx` — paste an Arbitrum address on `/explorer` to read `verification_of` + `badge` back from the contracts, with invalid-input / empty / unavailable / error states. | Browser run: invalid input rejected, valid address returns "No active verification record" (correct — no badge exists yet), zero console noise. |
+| 5 | **Icons + social card** | `app/icon.png`, `app/apple-icon.png`, `app/favicon.ico`, `app/opengraph-image.png`, `app/twitter-image.png` + `metadataBase`/openGraph/twitter metadata, real site URL. | All four assets 200 with correct content-type; HTML carries `og:*` and `twitter:*` tags and the icon links. |
+| 10 | **Root `.env.example`** | The four `NEXT_PUBLIC_*` vars with the zero-address warning. | — |
+| 9 | **License** | `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE` (canonical text) matching `MIT OR Apache-2.0` in the Cargo manifests. | — |
+| 11 | **Docs vs implementation** | README now states the live path builds the challenge client-side (nonce single-use, enforced on-chain) and explains the env-inlining trap; `qa/README.md` documents the configured-build requirement and the headless-Chromium path. | — |
+| — | **Reproducibility** | `qa/get-chromium.mjs` committed (extracts the headless Chromium that `@sparticuz/chromium` ships, for machines without Playwright browsers). | `wallet-state.mjs` runs 67/67 with `CHROMIUM_PATH=/tmp/chromium`. |
+
+**Regression evidence after all of the above (configured build):** `npm run typecheck` exit 0 · `npm run build` ✓ 13/13 pages · `node wallet-state.mjs` **67 passed / 0 failed** · `check.mjs` NONE · `layout.mjs` ALL PASS · `final.mjs` ALL PASS. `VerificationContext.tsx`, `lib/wallet/solana.ts`, `lib/verify-service.ts` and `qa/wallet-state.mjs` are byte-identical to `d44c903` — the security work is untouched.
