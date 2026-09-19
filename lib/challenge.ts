@@ -13,8 +13,9 @@ import type { VerificationChallenge } from "@/types";
  * The wallet's 32-byte Ed25519 public key (as 0x-hex) is part of the message,
  * so the challenge can only be built after the wallet connects.
  *
- * This mirrors what the backend serves from `GET /api/challenge` — the exact
- * same canonical bytes the Stylus verifier reconstructs on-chain.
+ * The live browser flow calls this directly; no server challenge is fetched.
+ * `GET /api/challenge` is an unused optional helper for the same canonical
+ * format. The Stylus verifier reconstructs the bytes and enforces the rules.
  */
 export function buildChallenge(walletHex: string): VerificationChallenge {
   // The verifier address is BOUND INTO the signed message. If it is not

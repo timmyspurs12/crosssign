@@ -12,6 +12,9 @@ export const dynamic = "force-dynamic";
  * Body: { publicKey, nonce, expires, signature, originNetwork }
  * (publicKey/signature are 0x-hex; expires is unix seconds.)
  *
+ * Optional helper with no callers in the current app. The live browser flow
+ * encodes and submits directly via lib/chain/client.ts.
+ *
  * Returns the calldata the user's Arbitrum wallet must send to the verifier,
  * plus the reconstructed message so the client can confirm what the contract
  * will verify. This route only *formats* the transaction — it does not verify

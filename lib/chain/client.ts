@@ -76,12 +76,9 @@ export async function readVerification(
   assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
-  try {
-    const rec = await verifier.verificationOf(account);
-    return rec.active ? (rec as OnChainVerification) : null;
-  } catch {
-    return null;
-  }
+  const rec = await verifier.verificationOf(account);
+  // ethers Results serialize as arrays; preserve the field names for API readers.
+  return rec.active ? (rec.toObject() as OnChainVerification) : null;
 }
 
 export async function readBadge(
@@ -91,12 +88,9 @@ export async function readBadge(
   assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const registry = new Contract(CONTRACTS.registry, [...REGISTRY_ABI], p);
-  try {
-    const badge = await registry.badge(badgeId);
-    return badge.active ? (badge as OnChainBadge) : null;
-  } catch {
-    return null;
-  }
+  const badge = await registry.badge(badgeId);
+  // Missing/inactive badges have active=false; RPC failures must reach the caller.
+  return badge.active ? (badge.toObject() as OnChainBadge) : null;
 }
 
 export async function readNonceUsed(

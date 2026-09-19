@@ -60,9 +60,10 @@ without a successful on-chain verification.
 ## 5. Verification flow
 
 1. Frontend connects Phantom and derives the 32-byte public key.
-2. A challenge is built from the canonical template (see below).
+2. The browser builds a fresh challenge in `lib/challenge.ts` using the canonical
+   template; the live flow does not call the optional challenge/prepare APIs.
 3. Phantom signs the message (no funds move, no approvals).
-4. The user's Arbitrum wallet submits `verify_and_issue(pubKey, nonce, expires, signature, originNetwork)`.
+4. The user's Arbitrum wallet submits `verifyAndIssue(pubKey, nonce, expires, signature, originNetwork)`.
 5. The verifier reconstructs the same message, checks the signature in Rust, burns the nonce, and calls the registry.
 6. The registry mints a soulbound badge to the caller. `WalletVerified` and `BadgeIssued` are emitted.
 
@@ -87,14 +88,15 @@ encoding (`lib/canonical.ts` ↔ `canonical_message`), cross-checked by
 
 ## 7. Contract addresses
 
-Not deployed yet — run the deployment (see `DEPLOYMENT.md`), then fill in:
+Live and proven on-chain. Reuse this pair; do not redeploy or change its issuer.
+See `deployments/sepolia.json` for deployment evidence.
 
 | Item | Value |
 |---|---|
 | Network | Arbitrum Sepolia |
 | Chain ID | 421614 |
-| CrossSignVerifier | `0x…` (pending deployment) |
-| CrossSignBadgeRegistry | `0x…` (pending deployment) |
+| CrossSignVerifier | `0xf30539d134a95b4f71efcdff88295ea36e5f3708` |
+| CrossSignBadgeRegistry | `0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2` |
 
 ## 8. Deployment instructions
 
@@ -117,16 +119,12 @@ input, and the non-transferability-by-design of badges.
 
 ## 10. Gas benchmarks
 
-**Not yet measured.** The project brief expects Stylus to make Ed25519 far
-cheaper than a Solidity equivalent, but no figure is claimed here until the
-contracts are deployed to Arbitrum Sepolia and measured. After deploying, run:
+Badge #2, minted through `crosssign.vercel.app`, used **470,424 gas** and cost
+about **0.0000835 ETH** in [this transaction](https://sepolia.arbiscan.io/tx/0x94b8aa30b4dcf443f92f9a208058a5c99bc19191339157723708a65c8160ec6d).
 
-```bash
-scripts/benchmark.sh
-```
-
-…which submits `verify_signature` (pure) and `verify_and_issue` and reports the
-gas used. Record the results in this section.
+This measures the complete `verifyAndIssue` call, including the badge mint,
+not Ed25519 alone. ETH cost depends on the transaction's fee conditions.
+No Solidity comparison or gas-savings multiplier has been measured or claimed.
 
 ## 11. Security considerations
 
@@ -146,8 +144,8 @@ SECURITY.md §Privacy).
 
 ## 12. Known limitations
 
-- `ed25519-dalek` runs in the contract, but the exact on-chain gas cost is
-  unmeasured until deployment (§10).
+- The full verification + mint has a measured gas cost (§10); isolated
+  Ed25519 cost and a Solidity comparison have not been measured.
 - The verifier stores the full 32-byte public key in the clear (chosen for
   simplicity and verifiability; a hash/commitment variant is possible later).
 - No migration/upgrade path is built in (immutability is a feature here);

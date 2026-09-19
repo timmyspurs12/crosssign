@@ -64,8 +64,8 @@ drives the **Live** path (rather than Interactive Demo) will fail:
 
 ```bash
 cd ..                                     # repo root
-export NEXT_PUBLIC_VERIFIER_ADDRESS=0x39db2d89ceb5b3f312c7a37459c39da05e251d2e
-export NEXT_PUBLIC_REGISTRY_ADDRESS=0x2862cbdc406546e457a8eb493708613fd9f7c8ac
+export NEXT_PUBLIC_VERIFIER_ADDRESS=0xf30539d134a95b4f71efcdff88295ea36e5f3708
+export NEXT_PUBLIC_REGISTRY_ADDRESS=0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2
 export NEXT_PUBLIC_CHAIN_ID=421614
 npm run build && npm run start            # then, in another shell:
 cd qa && node wallet-state.mjs
