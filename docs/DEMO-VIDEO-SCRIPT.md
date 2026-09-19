@@ -10,16 +10,13 @@ Record the screen first, then lay the voiceover over it — the slack is there s
 ## 0. Before you record (do these first)
 
 1. **Run one real verification and keep the transaction hash.** The demo's payoff is the on-chain proof scene, and it only works with a transaction that actually reached the verifier. A previous attempt (`0xb2d2e037…`) was sent to the **zero address** because that build had `NEXT_PUBLIC_VERIFIER_ADDRESS` unset — it succeeded as a no-op with no logs, so it can never be shown as proof.
-   - Verifier: `0x39db2d89cEb5b3F312C7A37459C39dA05E251d2e` (confirmed live: `crosssign.vercel.app/api/challenge` returns `contract=0x39db2d89…`)
-   - Registry: `0x2862cbdc406546e457a8eb493708613fd9f7c8ac`
-2. **Confirm the verifier is authorised to mint** (otherwise `verify_and_issue` reverts `Unauthorized` at the mint step):
-
-   ```bash
-   node -e "const {JsonRpcProvider,Contract}=require('ethers');const p=new JsonRpcProvider('https://sepolia-rollup.arbitrum.io/rpc');(async()=>{const r=new Contract('0x2862cbdc406546e457a8eb493708613fd9f7c8ac',['function issuer() view returns (address)','function badge_count() view returns (uint256)'],p);console.log('issuer =',await r.issuer());console.log('badges =',(await r.badge_count()).toString());})()"
-   ```
-   `issuer` must be the verifier address. If it isn't:
-   `PRIVATE_KEY=0x… node scripts/chain-admin.mjs set-issuer 0x2862cbdc406546e457a8eb493708613fd9f7c8ac 0x39db2d89ceb5b3f312c7a37459c39da05e251d2e`
-3. **A successful run must show all four:** `To = verifier`, Method `verify_and_issue`, a **`WalletVerified`** log, and a **Contract** row in the app that is *not* `0x000…0000`.
+   - Verifier: `0xf30539d134a95b4f71efcdff88295ea36e5f3708` (live deployment record: `contract/deployments/sepolia.json`)
+   - Registry: `0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2`
+2. **Reuse the already-authorized live pair.** Do not redeploy or run `set-issuer`.
+   Existing proof: badge #2 [transaction](https://sepolia.arbiscan.io/tx/0x94b8aa30b4dcf443f92f9a208058a5c99bc19191339157723708a65c8160ec6d),
+   minted through the production site. For a new recording, use a wallet that
+   has not already verified; the contract rejects repeat verification.
+3. **A successful run must show all four:** `To = verifier`, Method `verifyAndIssue`, a **`WalletVerified`** log, and a **Contract** row in the app that is *not* `0x000…0000`.
 4. Clean browser profile with **only** Phantom + your Arbitrum wallet installed. Hide the bookmarks bar, close other tabs, silence notifications.
 5. **Revoke CrossSign's site connection in Phantom** (Settings → Connected apps) so the connect step is visible on camera.
 6. Arbitrum wallet already on **Arbitrum Sepolia** with test ETH, no pending transactions.
@@ -90,9 +87,9 @@ Record the screen first, then lay the voiceover over it — the slack is there s
 - **Transition:** the Arbitrum wallet pops for the on-chain transaction.
 
 ### Scene 6 — Verify on-chain · 1:25–1:47
-- **Screen:** Arbitrum wallet confirmation for `verify_and_issue`, then the staged list in the app.
+- **Screen:** Arbitrum wallet confirmation for `verifyAndIssue`, then the staged list in the app.
 - **Do:** confirm the transaction. Keep the mouse still. The network field must read **Arbitrum Sepolia**.
-- **Visible:** gas ≈ 0.000006 ETH, `To:` = the verifier contract, then the staged checks completing.
+- **Visible:** actual wallet fee estimate (badge #2 used 470,424 gas, ≈0.0000835 ETH), `To:` = the verifier contract, then the staged checks completing.
 - **On-screen text:** `RUST → WASM · STYLUS ED25519 · ARBITRUM SEPOLIA`
 - **Voice:** "The signature goes to Arbitrum Sepolia, where CrossSign runs as a Stylus contract written in Rust. Arbitrum's Rust VM verifies Ed25519 natively, which the EVM cannot do. I confirm the transaction from my Arbitrum wallet."
 - **Transition:** the success card renders.
@@ -115,10 +112,10 @@ Record the screen first, then lay the voiceover over it — the slack is there s
 
 ### Scene 9 — On-chain proof · 2:22–2:45
 - **Screen:** Arbiscan **transaction** page for your *new* verification transaction.
-- **Do:** scroll slowly to Overview / Transaction Action, then stop. In post, slow-zoom on `To`, on Method `verify_and_issue`, and on the **Logs** row with `WalletVerified`. Optionally cut to the verifier's contract page showing the "Stylus Contract" label.
-- **Visible:** Status Success · To = verifier · Method `verify_and_issue` · `WalletVerified` log with wallet, badge id, public key, verified_at.
-- **On-screen text:** `TO: <verifier> · verify_and_issue · EVENT: WalletVerified`
-- **Voice:** "Here is the same verification on Arbiscan. Status, success. The transaction calls the CrossSign verifier, the method is verify_and_issue, and the logs carry a WalletVerified event with the public key and the badge id. The proof lives on-chain, so you don't have to take the app's word for it."
+- **Do:** scroll slowly to Overview / Transaction Action, then stop. In post, slow-zoom on `To`, on Method `verifyAndIssue`, and on the **Logs** row with `WalletVerified`. Optionally cut to the verifier's contract page showing the "Stylus Contract" label.
+- **Visible:** Status Success · To = verifier · Method `verifyAndIssue` · `WalletVerified` log with wallet, badge id, public key, verified_at.
+- **On-screen text:** `TO: <verifier> · verifyAndIssue · EVENT: WalletVerified`
+- **Voice:** "Here is the same verification on Arbiscan. Status, success. The transaction calls the CrossSign verifier, the method is verifyAndIssue, and the logs carry a WalletVerified event with the public key and the badge id. The proof lives on-chain, so you don't have to take the app's word for it."
 - **Transition:** cut back to the app.
 
 ### Scene 10 — Security design · 2:45–3:08
@@ -158,7 +155,7 @@ On-chain, the verifier rebuilds the exact challenge, checks the signature, burns
 
 This is the credential: the wallet, the origin network, the verification method, the transaction, and the verifier contract. It proves control of that key, not real-world identity, and CrossSign states that distinction in the product itself.
 
-Here is the same verification on Arbiscan. Status, success. The transaction calls the CrossSign verifier, the method is verify_and_issue, and the logs carry a WalletVerified event with the public key and the badge id. The proof lives on-chain, so you don't have to take the app's word for it.
+Here is the same verification on Arbiscan. Status, success. The transaction calls the CrossSign verifier, the method is verifyAndIssue, and the logs carry a WalletVerified event with the public key and the badge id. The proof lives on-chain, so you don't have to take the app's word for it.
 
 Every attempt mints a new challenge, and an expired one is never submitted. CrossSign re-reads the wallet's current account before signing, so an account switch mid-flow is detected rather than accepted. In-flight attempts are keyed to the attempt that started them, and the contract rejects a reused nonce outright.
 
@@ -172,7 +169,7 @@ That's CrossSign. One signature, verified in Rust on Arbitrum, with multi-chain 
 ## 4. Do not say / do not show
 
 - **No "Solidity"** — the contracts are Rust → WASM on Stylus. The repo has zero `.sol` files.
-- **No gas-savings number.** The landing page says "~10–50× cheaper"; `contract/README.md` states gas is **not yet measured**. Either measure it (`bash contract/scripts/benchmark.sh`) or keep the video's claim to "the EVM cannot do this natively".
+- **No gas-savings multiplier.** Badge #2 measured 470,424 gas (about 0.0000835 ETH) for verification + mint. Cite that transaction, not a comparison to Solidity; fees for a new run may differ.
 - **No "audited"**, no "battle-tested", no token/investor talk.
 - **Don't show the zero-address transaction.** A judge who clicks `To` sees `0x0000…0000`.
 - **Don't show terminal, GitHub, editor, or debug output.** Screen = product only.

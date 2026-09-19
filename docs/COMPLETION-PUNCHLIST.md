@@ -3,46 +3,35 @@
 Audited 2026-09-18 against the live deployment, the chain, and `main` (`3280ce2`).
 Ordered by what actually blocks a submission. Effort estimates are for one developer.
 
-> **Status update (branch `arena/01a0af2f-crosssign`, commit `5869d8f`).**
-> Items **2, 3, 4, 5, 6, 9, 10** and **11** are **done** and verified — see the
-> "Delivered" table below. **Item 1 still needs your key** (the `set-issuer`
-> transaction plus one real verification); **7** (source verification) and **8**
-> (gas measurement) need the Rust toolchain and two transactions, so they remain
-> yours. Item 12–15 are untouched.
->
-> **The audit also found a deeper root cause than item 3 described** — and it was
-> live in production: `lib/config.ts` resolved the addresses through
-> `process.env[key]`, which Next.js cannot inline into the browser bundle, so the
-> client always saw `0x0000…0000` regardless of the environment. That is now
-> fixed (static reads), which is why deploy-scoped env vars alone would never have
-> worked.
+> **Current status (2026-09-19):** the live pair in
+> `contract/deployments/sepolia.json` has minted badges #1 and #2. Do not redeploy
+> or run `set-issuer`. The older audit below is historical, not a current task list.
+> This session fixes BigInt serialization and named records in the read APIs,
+> stale addresses, challenge-flow documentation, and the unmeasured cost claim.
+> Production API confirmation is still required after the frontend rebuild.
+> Source publication remains optional; icons, metadata and licenses already exist.
 
 ---
 
-## Already done — verified, do not redo
+## Historical audit evidence (superseded where noted)
 
 | Item | Evidence |
 |---|---|
 | Wallet hardening + real-Phantom fix are on `main` | `main` = `3280ce2`; contains `requestStandardSignature` / `callLegacyDraft`, the `phantomModern` fixture and checks S21–S23, and the selector note |
 | Production deployment is current | GitHub deployment record: Production, sha `3280ce2`, status success |
-| Deployed env vars are correct | `crosssign.vercel.app/api/challenge` returns `contract=0x39db2d89ceb5b3f312c7a37459c39da05e251d2e` |
-| On-chain read APIs work in production | `/api/verification/0x39db…` → `{"verified":false,"record":null}`; `/api/badge/1` → `{"badge":null}` (clean responses, not `unavailable`) |
+| Live contract addresses | See `contract/deployments/sepolia.json`; prior audit addresses are obsolete. |
+| Read API audit limitation | Empty records worked, but populated records failed JSON serialization. Recheck badge #2 and its owner after deploying the fix. |
 | Typecheck / build / E2E | `tsc --noEmit` 0, `next build` OK, wallet-state suite 67/67 |
 
 ---
 
-## P0 — blocks submission (do these first)
+## Historical P0 findings (see current status above)
 
-### 1. No verification has ever succeeded on-chain. No badge exists.
-**Evidence.** The verifier `0x39db2d89…` has exactly **one** transaction — its own creation. The registry `0x2862cbdc…` likewise has only its creation transaction. `/api/badge/1` returns `null`.
-**Why.** `contract/scripts/deploy.sh` passes `ISSUER_ADDRESS` (which defaults to the **deployer EOA**) as the registry constructor arg. `registry.issue()` allows only `issuer` or `owner`, and the call arrives from the **verifier contract**, so minting reverts `Unauthorized`. DEPLOYMENT.md step 4 (`set_issuer`) was never executed — there is no such transaction.
-**Consequence.** The demo's on-chain proof scene cannot be recorded honestly, and "a badge is issued" is unproven.
-**Fix (~10 min + 1 tx).**
-```bash
-node -e "const {JsonRpcProvider,Contract}=require('ethers');const p=new JsonRpcProvider('https://sepolia-rollup.arbitrum.io/rpc');(async()=>{const r=new Contract('0x2862cbdc406546e457a8eb493708613fd9f7c8ac',['function issuer() view returns (address)'],p);console.log('issuer =',await r.issuer());})()"
-PRIVATE_KEY=0x… node scripts/chain-admin.mjs set-issuer 0x2862cbdc406546e457a8eb493708613fd9f7c8ac 0x39db2d89ceb5b3f312c7a37459c39da05e251d2e
-```
-Then run one verification end-to-end from the live site and keep the tx hash.
+### 1. On-chain verification — resolved
+Badge #1: `0xccb0dc92ca5c606fc16263cb2c68c46f73df74830f7f3b0f50d1d6f66ecee13b`.
+Badge #2: `0x94b8aa30b4dcf443f92f9a208058a5c99bc19191339157723708a65c8160ec6d`
+(minted through the production site). The live verifier is already authorized.
+No contract deployment or administration is needed.
 
 ### 2. `contract/scripts/deploy.sh` fails if anyone re-runs it
 Two defects in the committed script:
@@ -64,7 +53,7 @@ A misconfiguration must never look like a successful verification.
 
 ---
 
-## P1 — a judge will notice these
+## Historical P1 findings (see current status above)
 
 ### 5. No favicon, app icon, or social card
 `app/` has no `favicon.ico`/`icon.png`, there is no `public/`, and `metadata` has only title + description. The tab shows a default icon and a shared link renders a blank card.
@@ -78,9 +67,9 @@ A misconfiguration must never look like a successful verification.
 Both are labelled "Stylus Contract", but no source is published. Contract quality is the buildathon's first judging criterion.
 **Fix (~20 min).** `cd contract/registry && cargo stylus verify --endpoint …` and the same for `verifier` (needs `cargo-stylus` ≥ 0.5.0).
 
-### 8. Unmeasured gas claim on the landing page
-`components/home/TechnicalSection.tsx` states "~10–50× cheaper", while `contract/README.md` says the figure is deliberately **not** claimed until measured.
-**Fix (~30 min).** Run `bash contract/scripts/benchmark.sh`, then either cite the measured number in both places or soften the on-page copy.
+### 8. Gas claim — measured transaction, no multiplier
+Badge #2 used **470,424 gas**, about **0.0000835 ETH**, for verification + mint.
+The landing page and README now report this, not an unmeasured Solidity comparison.
 
 ### 9. No LICENSE file
 `contract/Cargo.toml` declares `MIT OR Apache-2.0`; the repository has no license file.
@@ -90,9 +79,11 @@ Both are labelled "Stylus Contract", but no source is published. Contract qualit
 `.gitignore` whitelists `!.env.example`, but the web app has none. Four variables are used: `NEXT_PUBLIC_VERIFIER_ADDRESS`, `NEXT_PUBLIC_REGISTRY_ADDRESS`, `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_ARBITRUM_RPC`.
 **Fix (5 min).** Add `/.env.example` with those four and the Sepolia defaults.
 
-### 11. Docs vs implementation: who mints the challenge?
-`README.md` and `app/api/challenge/route.ts` say the backend issues the nonce and formats the canonical message, but the live path builds the challenge **client-side** in `lib/challenge.ts` and never calls `/api/challenge`. Either is defensible (the nonce is burned on-chain), but the two should agree.
-**Fix (~30 min).** Either route the live challenge through `/api/challenge`, or correct the docs to say the client mints it and the contract enforces single-use. Also decide whether `app/api/verify/prepare/route.ts` is used — it currently has no caller.
+### 11. Challenge flow — documentation corrected
+The live browser path builds the canonical challenge in `lib/challenge.ts`.
+`/api/challenge` and `/api/verify/prepare` are optional helpers with no app callers.
+The contract reconstructs the message and enforces signature validity, expiry,
+binding and nonce single-use. No server is required to issue the challenge.
 
 ---
 
@@ -107,7 +98,7 @@ Both are labelled "Stylus Contract", but no source is published. Contract qualit
 
 ---
 
-## Suggested order
+## Historical suggested order (superseded; do not execute)
 
 1. **P0-1** set-issuer + one real verification → gives you the tx hash for the video and proves the product works.
 2. **P0-3** fail loudly on unconfigured contracts (prevents a repeat of the zero-address no-op).

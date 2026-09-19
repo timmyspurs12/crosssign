@@ -21,9 +21,9 @@ const ROWS = [
     evm: "Not supported",
   },
   {
-    label: "Relative cost",
-    solana: "~10–50× cheaper",
-    evm: "Prohibitive / error-prone",
+    label: "Verification + mint (badge #2)",
+    solana: "470,424 gas (≈0.0000835 ETH)",
+    evm: "No equivalent benchmark measured",
   },
 ];
 
@@ -36,7 +36,7 @@ export function TechnicalSection() {
             <SectionHeading
               eyebrow="Under the hood"
               title="Verification that doesn't trust the middleman."
-              description="CrossSign uses Stylus — Arbitrum's Rust-based VM — to verify Ed25519 signatures on-chain. The EVM cannot do this natively; CrossSign can, and it's cheaper than you'd think."
+              description="CrossSign uses Stylus — Arbitrum's Rust-based VM — to verify Ed25519 signatures on-chain. The EVM cannot do this natively; CrossSign can."
             />
             <div className="mt-8 space-y-4">
               <Note

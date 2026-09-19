@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readBadge } from "@/lib/chain/client";
+import { toJsonSafe } from "@/lib/json-safe";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,9 @@ export async function GET(
 
   try {
     const badge = await readBadge(badgeId);
-    return NextResponse.json({ badgeId, badge });
-  } catch {
+    return NextResponse.json({ badgeId, badge: badge ? toJsonSafe(badge) : null });
+  } catch (error) {
+    console.error("Failed to read badge", { badgeId, error });
     return NextResponse.json(
       { badgeId, badge: null, unavailable: true },
       { status: 503 },

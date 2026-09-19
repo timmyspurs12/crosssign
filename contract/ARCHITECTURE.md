@@ -107,11 +107,12 @@ status, or financial reputation.
 
 ## Backend / API (web app, `app/api/*`)
 
-The backend is a convenience/indexing layer only:
+The live browser builds the challenge in `lib/challenge.ts` and submits via
+`lib/chain/client.ts`. The API is a convenience layer, not a trusted issuer:
 
-- `GET /api/challenge` — issues a nonce + canonical message.
-- `POST /api/verify/prepare` — returns the calldata for `verify_and_issue`
-  (does **not** verify the signature, does **not** submit).
+- `GET /api/challenge` — optional nonce + canonical-message helper; no current app callers.
+- `POST /api/verify/prepare` — optional calldata helper for `verifyAndIssue`;
+  no current app callers (does **not** verify or submit).
 - `GET /api/verification/:address`, `GET /api/badge/:id` — read-on-chain
   helpers.
 
@@ -120,9 +121,12 @@ backend can go away and the protocol still works.
 
 ## Data flow (happy path)
 
-1. `GET /api/challenge?wallet=0x…` (or build locally) → `{nonce, expires, message}`.
-2. Phantom signs `message` → base58 signature.
-3. Frontend decodes base58 → hex, calls `verify_and_issue` via the Arbitrum wallet.
+1. Browser calls `buildChallenge(walletHex)` → fresh nonce + expiry + canonical message.
+2. Phantom signs the canonical message bytes → Ed25519 signature bytes.
+3. Frontend packages the public key and signature as `uint8[]`, then calls
+   `verifyAndIssue` via the connected Arbitrum wallet (no prepare API call).
 4. Verifier: rebuild message → `ed25519_dalek::Verifier::verify` → burn nonce → `registry.issue`.
 5. Registry: mint soulbound badge → `BadgeIssued`.
-6. Frontend reads `verification_of(owner)` and renders the proof + badge.
+6. Frontend uses the transaction receipt and `WalletVerified` event to render
+   the proof + badge. The explorer separately reads the verification and badge
+   through the read APIs when a user requests a lookup.

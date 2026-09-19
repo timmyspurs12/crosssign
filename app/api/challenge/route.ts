@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/challenge?wallet=0x<64 hex>
  *
- * Generates a CrossSign challenge for a wallet public key. The backend only
- * issues nonces and formats the canonical message — it performs NO
- * cryptographic verification. The signature is verified on-chain by the
- * Stylus verifier.
+ * Optional challenge-formatting helper; no callers in the current app.
+ * The live browser flow uses lib/challenge.ts instead. Both use the same
+ * canonical format; nonce single-use, expiry and signature verification are
+ * enforced on-chain by the Stylus verifier, not by this route.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);

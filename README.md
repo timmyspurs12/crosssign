@@ -92,7 +92,7 @@ idle → connecting → connected → signing → verifying → verified
 UI components render purely from this state; wallet access and blockchain
 calls are isolated behind `lib/*` service functions.
 
-## Backend integration points
+## Browser flow and read APIs
 
 The frontend is decoupled from the contracts/API behind typed service
 functions, so the on-chain layer can be wired up (or re-pointed) without
@@ -100,7 +100,7 @@ touching any UI component:
 
 1. **`lib/chain/client.ts`** — the only file that talks to the chain (ethers):
    `readIsVerified`, `readVerification`, `readBadge`, `readNonceUsed`,
-   `submitVerification` (BrowserProvider → `verify_and_issue` → parses the
+   `submitVerification` (BrowserProvider → `verifyAndIssue` → parses the
    `WalletVerified` badge id).
 2. **`lib/verify-service.ts`** — the live verification orchestrator: connect
    chosen Solana wallet → derive hex pubkey → build the canonical challenge →
@@ -121,9 +121,10 @@ touching any UI component:
    issuance, calldata encoding, and read helpers. The **live path builds the
    canonical challenge in the client** (`lib/challenge.ts`) — the nonce is
    single-use and enforced by the contract, so it does not need a server round
-   trip; `/api/challenge` is the equivalent server-side helper for other
-   callers. **Signature verification happens only inside the Stylus contract**,
-   never in the backend.
+   trip. `/api/challenge` and `/api/verify/prepare` are optional helpers with
+   no callers in the current app; live calldata is built in `lib/chain/client.ts`
+   and submitted through the connected EVM wallet. **Signature verification happens
+   only inside the Stylus contract**, never in the backend.
 
 ## Run
 
@@ -142,6 +143,7 @@ npm run start      # serve the production build
 npm run typecheck                 # strict TypeScript (tsc --noEmit)
 npm run build                     # production build (fails on any type error)
 node scripts/check-canonical.mjs  # JS canonical message == Rust fixture
+node scripts/check-read-apis.mjs  # offline ethers decoding + read-route regression
 ```
 
 **Contracts**
@@ -170,17 +172,18 @@ Live and activated. Full record: `contract/deployments/sepolia.json`.
 
 | Contract | Address | Arbiscan |
 |---|---|---|
-| **CrossSignVerifier** | `0x39db2d89cEb5b3F312C7A37459C39dA05E251d2e` | [address](https://sepolia.arbiscan.io/address/0x39db2d89ceb5b3f312c7a37459c39da05e251d2e) · [deploy](https://sepolia.arbiscan.io/tx/0x5ff9037a8d4f3fabc8c6b07e960272c11160a5a35e4bb705c1db064f90192e10) · [activate](https://sepolia.arbiscan.io/tx/0x5728fe1df632ea8ae5f1b512ade4af70833b3fa621eb975269d06ac1d58724df) |
-| **CrossSignBadgeRegistry** | `0x2862cbdc406546e457a8eb493708613fd9f7c8ac` | [address](https://sepolia.arbiscan.io/address/0x2862cbdc406546e457a8eb493708613fd9f7c8ac) · [deploy](https://sepolia.arbiscan.io/tx/0xf29d97c14ee9ecb665815e2d45aaf0e8bf69f292d7aad8cfa5eae7a6a7930625) · [activate](https://sepolia.arbiscan.io/tx/0x318b2d050e2e80cfeb1e2d2fae45a82a97d477d720b78fc1422106f4e61fd97a) |
+| **CrossSignVerifier** | `0xf30539d134a95b4f71efcdff88295ea36e5f3708` | [address](https://sepolia.arbiscan.io/address/0xf30539d134a95b4f71efcdff88295ea36e5f3708) · [deploy + activate](https://sepolia.arbiscan.io/tx/0x3d436655f91f015ace5016227541d9090b5036389f8c776e57b38a7e448b4887) |
+| **CrossSignBadgeRegistry** | `0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2` | [address](https://sepolia.arbiscan.io/address/0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2) · [deploy + activate](https://sepolia.arbiscan.io/tx/0xa2e1076ec9424366d4e1b4432ea6ed6c7950c99baef491ba0458ff72203a11f2) |
 
 Both are **Stylus programs** (Rust → WASM): deployed with `cargo stylus deploy`
-and activated via `activateProgram`, which is why Arbiscan labels them
+with deployment, activation and constructors executed atomically through
+StylusDeployer, which is why Arbiscan labels them
 "Stylus Contract". Deployer/owner: `0xf8e604137A2F4b213AC115D33fee170EB5a63282`.
 Live app: https://crosssign.vercel.app
 
-> The registry's constructor receives an initial issuer. Until
-> `scripts/chain-admin.mjs set-issuer <REGISTRY> <VERIFIER>` has been run,
-> `verify_and_issue` reverts `Unauthorized` at the mint step.
+The live verifier is already authorized to mint. **Do not redeploy or re-point
+this pair.** Badge #1 is recorded in the deployment file; badge #2 was minted
+through the production site: [transaction](https://sepolia.arbiscan.io/tx/0x94b8aa30b4dcf443f92f9a208058a5c99bc19191339157723708a65c8160ec6d).
 
 ## Smart contract (`contract/`)
 
@@ -199,11 +202,16 @@ The on-chain half: two **Stylus** contracts in Rust.
 - **Deploy:** see `contract/DEPLOYMENT.md` (registry first, then verifier)
 - **ABI:** `lib/contract-abi.ts` mirrors the Solidity interfaces
 
-Methods: `verify_and_issue(bytes,string,uint64,bytes,string) → uint256` ·
-`verify_signature(bytes,bytes,string) → bool` (view) ·
-`verification_of(address) → Verification` · `badge(uint256) → Badge` ·
-`is_verified(address) → bool` · `nonce_used(bytes32) → bool` ·
-`issue(address,bytes,string)` · `set_issuer(address)` · `revoke(uint256)`.
+Live ABI methods: `verifyAndIssue(uint8[],string,uint64,uint8[],string) → uint256`
+(selector `0xe5f28691`) · `verifySignature(uint8[],uint8[],uint8[]) → bool` ·
+`verificationOf(address) → Verification` · `badge(uint256) → Badge` ·
+`isVerified(address) → bool` · `nonceUsed(string) → bool` ·
+`issue(address,uint8[],string)` (selector `0x4a7d65c1`) ·
+`setIssuer(address)` · `revoke(uint256)`.
+
+**Do not change these to snake_case or `bytes`:** stylus-sdk 0.10.9 exports
+Rust `Vec<u8>` parameters as `uint8[]`. Tuple fields/events declared as `bytes`
+remain `bytes`.
 
 Docs: `contract/README.md` (full API + security model) ·
 `contract/ARCHITECTURE.md` · `contract/SECURITY.md` · `contract/DEPLOYMENT.md`.
@@ -219,17 +227,9 @@ them**.
 - A funded Arbitrum Sepolia wallet — faucet: https://arbitrum.faucet.dev
 - (optional) a Vercel account to host the frontend
 
-**1. Deploy the contracts** (registry first, then verifier, then authorize):
-
-```bash
-cd contract
-cp .env.example .env            # paste PRIVATE_KEY (throwaway wallet, never commit)
-bash scripts/deploy.sh          # → deployments/sepolia.json
-cd .. && PRIVATE_KEY=0x… node scripts/chain-admin.mjs set-issuer <REGISTRY> <VERIFIER>
-```
-
-Full step-by-step (check, activate, verify on Arbiscan, troubleshooting):
-`contract/DEPLOYMENT.md`.
+**1. Reuse the live contracts above.** No contract deployment or issuer change
+is needed. `contract/DEPLOYMENT.md` documents deployment mechanics for reference,
+not an instruction to replace the working pair.
 
 **2. Point the frontend at the contracts** — create `.env.local`:
 
@@ -247,11 +247,18 @@ Project Settings) or self-host:
 npm run build && npm run start
 ```
 
-**4. Smoke test** — verify a real Solana wallet from an Arbitrum Sepolia
-wallet, confirm the badge minted
-(`node scripts/chain-admin.mjs badge <REGISTRY> <badgeId>`), then measure gas
-(`contract/scripts/benchmark.sh`) and record the numbers in
-`contract/README.md` §10 (no gas figure is claimed until this is done).
+**4. Smoke test after the frontend rebuild** — read the existing evidence (no
+new transaction needed):
+
+```bash
+curl -sS https://crosssign.vercel.app/api/badge/2
+curl -sS https://crosssign.vercel.app/api/verification/0x6648bc2a1b5444cd96535c96e8f2da37a74dfd38
+```
+
+Both should return real records without `unavailable`. Badge #2 used **470,424 gas**
+(about **0.0000835 ETH** at that transaction's fee). This is a measured full
+verification + badge mint, not an isolated Ed25519 benchmark or a Solidity
+savings comparison; see `contract/README.md` §10.
 
 ## Stack
 

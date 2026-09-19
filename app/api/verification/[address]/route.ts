@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readVerification } from "@/lib/chain/client";
+import { toJsonSafe } from "@/lib/json-safe";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,13 @@ export async function GET(
 
   try {
     const record = await readVerification(address);
-    return NextResponse.json({ address, verified: Boolean(record), record });
-  } catch {
-    // RPC unavailable or contract not yet deployed — degrade gracefully.
+    return NextResponse.json({
+      address,
+      verified: Boolean(record),
+      record: record ? toJsonSafe(record) : null,
+    });
+  } catch (error) {
+    console.error("Failed to read verification", { address, error });
     return NextResponse.json(
       { address, verified: false, record: null, unavailable: true },
       { status: 503 },

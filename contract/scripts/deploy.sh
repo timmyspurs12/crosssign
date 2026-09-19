@@ -3,8 +3,8 @@
 # Deploy CrossSign to Arbitrum Sepolia.
 #
 # By default, this script REUSES the existing CrossSignBadgeRegistry
-# (0x2862cbDc…). Set FORCE_REGISTRY_DEPLOY=true only when you intentionally
-# want to deploy a completely new registry.
+# (0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2). Set FORCE_REGISTRY_DEPLOY=true
+# only when you intentionally want to deploy a completely new registry.
 #
 # What it does:
 #   1. reuses (or force-deploys) CrossSignBadgeRegistry
@@ -33,7 +33,7 @@ DEST_NETWORK="${DESTINATION_NETWORK:-arbitrum-sepolia}"
 MAX_FEE_PER_GAS_GWEI="${MAX_FEE_PER_GAS_GWEI:-0.5}"
 
 # Existing, already deployed and activated registry.
-LIVE_REGISTRY="0x2862cbdc406546e457a8eb493708613fd9f7c8ac"
+LIVE_REGISTRY="0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2"
 
 # Allow an explicit registry address, otherwise use the live registry.
 REGISTRY_ADDRESS="${REGISTRY_ADDRESS:-$LIVE_REGISTRY}"
