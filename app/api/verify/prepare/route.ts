@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Interface } from "ethers";
+import { Interface, getBytes } from "ethers";
 import { VERIFIER_ABI } from "@/lib/contract-abi";
 import { canonicalVerificationMessage } from "@/lib/canonical";
 import { CONTRACTS, NETWORK } from "@/lib/config";
@@ -42,11 +42,11 @@ export async function POST(req: Request) {
   }
 
   const iface = new Interface([...VERIFIER_ABI]);
-  const data = iface.encodeFunctionData("verify_and_issue", [
-    publicKey,
+  const data = iface.encodeFunctionData("verifyAndIssue", [
+    Array.from(getBytes(publicKey)),
     nonce,
     expires,
-    signature,
+    Array.from(getBytes(signature)),
     originNetwork,
   ]);
 

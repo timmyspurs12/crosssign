@@ -14,6 +14,7 @@
 import {
   BrowserProvider,
   Contract,
+  getBytes,
   JsonRpcProvider,
   type Signer,
 } from "ethers";
@@ -65,7 +66,7 @@ export async function readIsVerified(
   assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
-  return verifier.is_verified(account);
+  return verifier.isVerified(account);
 }
 
 export async function readVerification(
@@ -76,7 +77,7 @@ export async function readVerification(
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
   try {
-    const rec = await verifier.verification_of(account);
+    const rec = await verifier.verificationOf(account);
     return rec.active ? (rec as OnChainVerification) : null;
   } catch {
     return null;
@@ -105,7 +106,7 @@ export async function readNonceUsed(
   assertContractsConfigured();
   const p = provider ?? getReadProvider();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], p);
-  return verifier.nonce_used(nonce);
+  return verifier.nonceUsed(nonce);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,11 +145,11 @@ export async function submitVerification(params: {
   const signer: Signer = await provider.getSigner();
   const verifier = new Contract(CONTRACTS.verifier, [...VERIFIER_ABI], signer);
 
-  const tx = await verifier.verify_and_issue(
-    params.publicKeyHex,
+  const tx = await verifier.verifyAndIssue(
+    Array.from(getBytes(params.publicKeyHex)),
     params.nonce,
     params.expires,
-    params.signatureHex,
+    Array.from(getBytes(params.signatureHex)),
     params.originNetwork,
   );
 

@@ -18,13 +18,13 @@ const rpc = process.env.RPC_URL ?? "https://sepolia-rollup.arbitrum.io/rpc";
 const provider = new JsonRpcProvider(rpc);
 
 const REGISTRY_ABI = [
-  "function set_issuer(address new_issuer)",
+  "function setIssuer(address new_issuer)",
   "function issuer() view returns (address)",
   "function badge(uint256 badge_id) view returns (tuple(address owner, bytes public_key, string origin_network, uint256 verified_at, uint256 badge_id, bool active))",
 ];
 const VERIFIER_ABI = [
-  "function verification_of(address account) view returns (tuple(address owner, bytes public_key, string origin_network, string destination_network, uint256 chain_id, uint256 verified_at, uint256 badge_id, bool active))",
-  "function is_verified(address account) view returns (bool)",
+  "function verificationOf(address account) view returns (tuple(address owner, bytes public_key, string origin_network, string destination_network, uint256 chain_id, uint256 verified_at, uint256 badge_id, bool active))",
+  "function isVerified(address account) view returns (bool)",
 ];
 
 async function setIssuer(registryAddr, verifierAddr) {
@@ -33,7 +33,7 @@ async function setIssuer(registryAddr, verifierAddr) {
   const wallet = new Wallet(priv, provider);
   const registry = new Contract(registryAddr, REGISTRY_ABI, wallet);
   console.log("calling set_issuer(" + verifierAddr + ") from " + wallet.address);
-  const tx = await registry.set_issuer(verifierAddr);
+  const tx = await registry.setIssuer(verifierAddr);
   const r = await tx.wait();
   console.log("tx:", r.hash);
   console.log("issuer now:", await registry.issuer());
@@ -41,8 +41,8 @@ async function setIssuer(registryAddr, verifierAddr) {
 
 async function readVerification(verifierAddr, account) {
   const verifier = new Contract(verifierAddr, VERIFIER_ABI, provider);
-  console.log("is_verified:", await verifier.is_verified(account));
-  const rec = await verifier.verification_of(account);
+  console.log("is_verified:", await verifier.isVerified(account));
+  const rec = await verifier.verificationOf(account);
   console.log(JSON.stringify(rec, (k, v) => (typeof v === "bigint" ? v.toString() : v), 2));
 }
 

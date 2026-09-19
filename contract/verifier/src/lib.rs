@@ -208,7 +208,7 @@ pub enum CrossSignVerifierError {
 // Typed view of the BadgeRegistry — the only function we need is `issue`.
 sol_interface! {
     interface ICrossSignBadgeRegistry {
-        function issue(address recipient, bytes public_key, string origin_network) external returns (uint256);
+        function issue(address recipient, uint8[] public_key, string origin_network) external returns (uint256);
     }
 }
 
@@ -493,7 +493,7 @@ mod tests {
     // `issue(address,bytes,string)` call type — used only to build the exact
     // calldata the verifier sends to the registry, so tests can mock it.
     sol! {
-        function issue(address recipient, bytes public_key, string origin_network) returns (uint256);
+        function issue(address recipient, uint8[] public_key, string origin_network) returns (uint256);
     }
 
     fn deploy() -> (TestVM, CrossSignVerifier) {

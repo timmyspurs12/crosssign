@@ -17,5 +17,9 @@ stylus-sdk = { workspace = true, features = ["stylus-test"] }
 export-abi = ["stylus-sdk/export-abi"]
 contract-client-gen = []
 
+[[bin]]
+name = "crosssign-registry"
+path = "src/main.rs"
+
 [lib]
 crate-type = ["lib", "cdylib"]

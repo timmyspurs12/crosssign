@@ -2,22 +2,46 @@
   "network": "Arbitrum Sepolia",
   "chainId": 421614,
   "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
-  "registry": "0x2862cbdc406546e457a8eb493708613fd9f7c8ac",
-  "registryDeploymentTx": "0xf29d97c14ee9ecb665815e2d45aaf0e8bf69f292d7aad8cfa5eae7a6a7930625",
-  "registryActivationTx": "0x318b2d050e2e80cfeb1e2d2fae45a82a97d477d720b78fc1422106f4e61fd97a",
-  "verifier": "0x39db2d89ceb5b3f312c7a37459c39da05e251d2e",
-  "verifierDeploymentTx": "0x5ff9037a8d4f3fabc8c6b07e960272c11160a5a35e4bb705c1db064f90192e10",
-  "verifierActivationTx": "0x5728fe1df632ea8ae5f1b512ade4af70833b3fa621eb975269d06ac1d58724df",
+  "registry": "0x1be5fca582abbe2f69f5a3ce15311dea553ec8f2",
+  "registryDeploymentTx": "0xa2e1076ec9424366d4e1b4432ea6ed6c7950c99baef491ba0458ff72203a11f2",
+  "registryActivationTx": null,
+  "verifier": "0xf30539d134a95b4f71efcdff88295ea36e5f3708",
+  "verifierDeploymentTx": "0x3d436655f91f015ace5016227541d9090b5036389f8c776e57b38a7e448b4887",
+  "verifierActivationTx": null,
   "destinationNetwork": "arbitrum-sepolia",
   "deployer": "0xf8e604137a2f4b213ac115d33fee170eb5a63282",
-  "deployedAt": "2026-09-16T10:00:56Z",
-  "deployedRegistryAt": "2026-09-16T09:44:08Z",
+  "deployedRegistryAt": "2026-09-19T07:19:08Z",
+  "deployedVerifierAt": "2026-09-19T12:45:02Z",
+  "issuerSetTx": "0x6e5034921624acabfb7e7019d2fa6cf6ee6a9db651d1f302045a9a6a4f7e8b61",
+  "issuerSetAt": "2026-09-19T13:13:22Z",
+  "stylusDeployer": "0xcecba2f1dc234f70dd89f2041029807f8d03a990",
   "sourceVerified": false,
   "explorer": "https://sepolia.arbiscan.io/address/",
-  "note": "Both contracts are Arbitrum Stylus programs (Rust → WASM): deployed with `cargo stylus deploy` and activated via activateProgram, so Arbiscan labels them \"Stylus Contract\". Run `cargo stylus verify` in each crate to publish the Rust source against these addresses. Authorize the verifier to mint with `node scripts/chain-admin.mjs set-issuer <registry> <verifier>` — the registry constructor received the deployer EOA as its initial issuer, so until that call is made every verify_and_issue reverts Unauthorized at the registry.",
+  "firstVerification": {
+    "tx": "0xccb0dc92ca5c606fc16263cb2c68c46f73df74830f7f3b0f50d1d6f66ecee13b",
+    "date": "2026-09-19T13:31:37Z",
+    "block": 310543875,
+    "badgeId": 1,
+    "wallet": "0xf8e604137a2f4b213ac115d33fee170eb5a63282",
+    "events": [
+      "BadgeIssued(address indexed owner, uint256 indexed badge_id, bytes public_key, string origin_network)",
+      "VerificationRequested(address indexed wallet, bytes public_key, string nonce, uint64 expires)",
+      "WalletVerified(address indexed wallet, uint256 indexed badge_id, bytes public_key, uint256 verified_at)"
+    ],
+    "gasUsed": 558742
+  },
+  "note": "Both contracts are Arbitrum Stylus programs (Rust -> WASM). The constructor path of cargo-stylus >= 0.9 deploys, activates and runs the constructor atomically through the on-chain StylusDeployer (0xcEcba2F1...F8D03A990), so the deployment tx IS the activation tx; there is no separate activation hash. Two earlier pairs are dead and must not be used: pair A (registry 0x2862cbdc..., verifier 0x39db2d89...) and pair B (registry 0x4aa6737f..., verifier 0x1bc7b44e...) - both have owner == 0x0 because their constructors never ran, which makes set_issuer impossible on them. IMPORTANT: stylus-sdk 0.10.9 exports Vec<u8> parameters as uint8[] (NOT bytes), so the client ABI must declare verifyAndIssue(uint8[],string,uint64,uint8[],string) (selector 0xe5f28691) and issue(address,uint8[],string) (selector 0x4a7d65c1). Run `node scripts/chain-admin.mjs set-issuer <registry> <verifier>` only when the verifier changes. Publish Rust source with `cargo stylus verify` in each crate.",
   "verificationsAsOf": {
-    "date": "2026-09-18",
-    "verifyAndIssueTxs": 0,
-    "badgesIssued": 0
+    "date": "2026-09-19",
+    "verifyAndIssueTxs": 1,
+    "badgesIssued": 1
+  },
+  "cacheBids": {
+    "registry": {
+      "tx": "0xc114d7f0a51172ebfd24fbf4ac2cbb9cc580fc741e3e30e313927038df53acd1"
+    },
+    "verifier": {
+      "tx": "0x5d726660b10c5a7d0d6c69848eb5bd7b8c0cf64808f96514784ab5b414d4b747"
+    }
   }
 }

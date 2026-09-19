@@ -12,36 +12,36 @@
 export const VERIFIER_ABI = [
   // introspect
   "function owner() view returns (address)",
-  "function badge_registry() view returns (address)",
-  "function chain_id() view returns (uint64)",
-  "function verifier_address() view returns (address)",
-  "function destination_network() view returns (string)",
-  "function verification_count() view returns (uint256)",
+  "function badgeRegistry() view returns (address)",
+  "function chainId() view returns (uint64)",
+  "function verifierAddress() view returns (address)",
+  "function destinationNetwork() view returns (string)",
+  "function verificationCount() view returns (uint256)",
   // challenge + crypto
-  "function build_challenge(bytes public_key, string nonce, uint64 expires) view returns (string)",
-  "function verify_signature(bytes public_key, bytes signature, bytes message) view returns (bool)",
+  "function buildChallenge(uint8[] public_key, string nonce, uint64 expires) view returns (string)",
+  "function verifySignature(uint8[] public_key, uint8[] signature, uint8[] message) view returns (bool)",
   // verification
-  "function verify_and_issue(bytes public_key, string nonce, uint64 expires, bytes signature, string origin_network) returns (uint256)",
-  "function is_verified(address account) view returns (bool)",
-  "function verification_of(address account) view returns (tuple(address owner, bytes public_key, string origin_network, string destination_network, uint256 chain_id, uint256 verified_at, uint256 badge_id, bool active))",
-  "function nonce_used(string nonce) view returns (bool)",
+  "function verifyAndIssue(uint8[] public_key, string nonce, uint64 expires, uint8[] signature, string origin_network) returns (uint256)",
+  "function isVerified(address account) view returns (bool)",
+  "function verificationOf(address account) view returns (tuple(address owner, bytes public_key, string origin_network, string destination_network, uint256 chain_id, uint256 verified_at, uint256 badge_id, bool active))",
+  "function nonceUsed(string nonce) view returns (bool)",
   // admin
-  "function set_badge_registry(address registry)",
+  "function setBadgeRegistry(address registry)",
   // events
   "event VerificationRequested(address indexed wallet, bytes public_key, string nonce, uint64 expires)",
   "event WalletVerified(address indexed wallet, uint256 indexed badge_id, bytes public_key, uint256 verified_at)",
 ] as const;
 
 export const REGISTRY_ABI = [
-  "function issue(address recipient, bytes public_key, string origin_network) returns (uint256)",
+  "function issue(address recipient, uint8[] public_key, string origin_network) returns (uint256)",
   "function owner() view returns (address)",
   "function issuer() view returns (address)",
-  "function badge_count() view returns (uint256)",
-  "function is_issued(address account) view returns (bool)",
-  "function badge_id_of(address account) view returns (uint256)",
+  "function badgeCount() view returns (uint256)",
+  "function isIssued(address account) view returns (bool)",
+  "function badgeIdOf(address account) view returns (uint256)",
   "function badge(uint256 badge_id) view returns (tuple(address owner, bytes public_key, string origin_network, uint256 verified_at, uint256 badge_id, bool active))",
-  "function badge_of(address account) view returns (tuple(address owner, bytes public_key, string origin_network, uint256 verified_at, uint256 badge_id, bool active))",
-  "function set_issuer(address new_issuer)",
+  "function badgeOf(address account) view returns (tuple(address owner, bytes public_key, string origin_network, uint256 verified_at, uint256 badge_id, bool active))",
+  "function setIssuer(address new_issuer)",
   "function revoke(uint256 badge_id)",
   // events
   "event BadgeIssued(address indexed owner, uint256 indexed badge_id, bytes public_key, string origin_network)",
